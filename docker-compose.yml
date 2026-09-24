@@ -8,6 +8,8 @@ services:
       - .:/app
       - /app/__pycache__
       - ./output:/app/output
+    environment:
+      - YOLO_MODEL_PATH=/opt/models/yolov8n.pt
     restart: unless-stopped
 
   frontend:
