@@ -1,0 +1,61 @@
+name: Test Clip Generation
+
+on:
+  workflow_dispatch:
+    inputs:
+      video_url:
+        description: 'YouTube URL to clip'
+        required: true
+        type: string
+
+jobs:
+  clip:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Start backend
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: docker compose up --build -d
+
+      - name: Wait for backend to be ready
+        run: |
+          for i in {1..60}; do
+            if curl -sf http://localhost:8000/health/ready; then
+              echo "Backend is ready"
+              break
+            fi
+            echo "Waiting for backend... ($i)"
+            sleep 5
+          done
+
+      - name: Install OpenShorts CLI
+        run: pip install openshorts
+
+      - name: Process video
+        id: process
+        env:
+          OPENSHORTS_API_URL: http://localhost:8000
+        run: |
+          openshorts process "${{ inputs.video_url }}" --wait
+
+      - name: Show backend logs (always, for debugging)
+        if: always()
+        run: docker compose logs backend --tail=200
+
+      - name: List generated clips
+        run: |
+          find . -iname "*.mp4" -newer .github/workflows/test-clip.yml 2>/dev/null || true
+
+      - name: Upload clip as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-clips
+          path: |
+            **/*.mp4
+          retention-days: 3
+          if-no-files-found: warn
