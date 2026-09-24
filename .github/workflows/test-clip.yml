@@ -44,6 +44,7 @@ jobs:
         id: process
         env:
           OPENSHORTS_API_URL: http://localhost:8000
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           openshorts process "${{ inputs.video_url }}" --wait
 
