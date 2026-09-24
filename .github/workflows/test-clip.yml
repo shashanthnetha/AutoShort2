@@ -16,6 +16,11 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
+      - name: Prepare host directories
+        run: |
+          mkdir -p uploads output
+          chmod -R 777 uploads output
+
       - name: Start backend
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
