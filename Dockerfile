@@ -104,7 +104,12 @@ RUN chown -R appuser:appuser /app /tmp/Ultralytics
 USER appuser
 
 # Pre-download YOLO model on build (now running as appuser)
-RUN python -c "from ultralytics import YOLO; YOLO('yolov8n.pt')"
+# Store YOLO model outside /app so the docker-compose bind mount
+# does not hide it at runtime.
+RUN mkdir -p /opt/models && chown -R appuser:appuser /opt/models
+
+# Pre-download YOLO model during image build
+RUN python -c "from ultralytics import YOLO; YOLO('/opt/models/yolov8n.pt')"
 
 # Expose FastAPI port
 EXPOSE 8000
