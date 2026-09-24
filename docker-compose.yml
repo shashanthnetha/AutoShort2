@@ -10,6 +10,7 @@ services:
       - ./output:/app/output
     environment:
       - YOLO_MODEL_PATH=/opt/models/yolov8n.pt
+      - YOUTUBE_COOKIES
     restart: unless-stopped
 
   frontend:
