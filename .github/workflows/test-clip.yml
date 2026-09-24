@@ -25,6 +25,7 @@ jobs:
       - name: Start backend
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
         run: |
           docker compose up --build -d
 
