@@ -40,13 +40,27 @@ jobs:
       - name: Install OpenShorts CLI
         run: pip install openshorts
 
-      - name: Process video
-        id: process
+      - name: Discover API schema
+        run: |
+          curl -s http://localhost:8000/openapi.json -o openapi.json
+          echo "--- /api/process ---"
+          python3 -c "
+          import json
+          spec = json.load(open('openapi.json'))
+          for path in ['/api/process']:
+              print(json.dumps(spec['paths'].get(path, 'NOT FOUND'), indent=2))
+          "
+
+      - name: Process video (direct API call)
         env:
-          OPENSHORTS_API_URL: http://localhost:8000
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
-          openshorts process "${{ inputs.video_url }}" --wait
+          set -e
+          RESPONSE=$(curl -sf -X POST http://localhost:8000/api/process \
+            -H "Content-Type: application/json" \
+            -H "X-Gemini-Key: $GEMINI_API_KEY" \
+            -d "{\"url\": \"${{ inputs.video_url }}\", \"acknowledged\": true}")
+          echo "Response: $RESPONSE"
 
       - name: Show backend logs (always, for debugging)
         if: always()
