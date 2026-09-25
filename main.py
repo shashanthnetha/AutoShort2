@@ -28,8 +28,9 @@ import layout_picker
 import llm_backend
 from clip_selection import (build_transcript_windows, clip_count_targets,
                             clip_duration_bounds, dedupe_overlapping,
-                            score_batches, shortlist_target,
-                            snap_clip_to_words, trim_to_best)
+                            diverse_shortlist, score_batches,
+                            shortlist_target, snap_clip_to_words,
+                            trim_to_best)
 from ffmpeg_utils import (video_encode_args, audio_encode_args, cut_clip, QUALITY,
                           QUALITY_FAST, METADATA_SCRUB)
 from dotenv import load_dotenv
@@ -1769,7 +1770,13 @@ def get_viral_clips(transcript_result, video_duration):
         # more candidates without exploding the detail call.
         scored.sort(key=lambda w: w.get("score", 0), reverse=True)
         by_id = {w["id"]: w for w in windows}
-        shortlist = [by_id[w["id"]] for w in scored[:target] if w.get("id") in by_id]
+        
+        shortlist = diverse_shortlist(
+            scored_windows=scored,
+            all_windows=windows,
+            target=target,
+        )
+        
         if not shortlist:
             shortlist = windows[:target]  # scoring returned nothing usable
         print(f"   Shortlisted {len(shortlist)} window(s) for detail.")
