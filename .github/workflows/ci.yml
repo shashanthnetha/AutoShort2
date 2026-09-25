@@ -21,7 +21,7 @@ jobs:
       # for the MCP endpoint tests, google-genai covers gemini_worker.
       - name: Install test dependencies
         run: >
-          pip install pytest pillow httpx pydantic sqlalchemy numpy
+          pip install pytest pillow httpx pydantic "sqlalchemy[asyncio]" numpy
           opencv-python-headless python-dotenv google-genai fastapi boto3
           PyJWT email-validator python-multipart
       - name: Run tests
