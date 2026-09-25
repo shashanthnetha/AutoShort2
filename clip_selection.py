@@ -81,6 +81,104 @@ def shortlist_target(video_duration):
     return max(3, min(10, int(seconds // 90) + 2))
 
 
+def diverse_shortlist(scored_windows, all_windows, target):
+    """Select strong candidates while preserving coverage across the video.
+
+    Most candidates come from evenly distributed time buckets so an important
+    moment late in a long video is not lost just because earlier windows have
+    slightly higher scores. A smaller global-score pool preserves exceptionally
+    strong moments wherever they occur.
+    """
+    scored_by_id = {
+        str(w.get("id")): w
+        for w in (scored_windows or [])
+        if w.get("id")
+    }
+
+    candidates = [
+        scored_by_id[w["id"]]
+        for w in (all_windows or [])
+        if w.get("id") in scored_by_id
+    ]
+
+    if not candidates:
+        return []
+
+    target = max(1, min(int(target or 1), len(candidates)))
+
+    # For short videos, the existing global ranking is already sufficient.
+    if len(candidates) <= target * 1.5:
+        return sorted(
+            candidates,
+            key=lambda w: float(w.get("score", 0)),
+            reverse=True,
+        )[:target]
+
+    # Reserve about 70% of the slots for timeline coverage.
+    coverage_slots = max(1, min(target, round(target * 0.7)))
+    global_slots = target - coverage_slots
+
+    min_time = min(float(w.get("start", 0) or 0) for w in candidates)
+    max_time = max(float(w.get("end", 0) or 0) for w in candidates)
+    span = max(max_time - min_time, 1.0)
+
+    selected = []
+    selected_ids = set()
+
+    # Pick the strongest window from each evenly spaced time bucket.
+    for bucket_index in range(coverage_slots):
+        bucket_start = min_time + span * bucket_index / coverage_slots
+        bucket_end = min_time + span * (bucket_index + 1) / coverage_slots
+
+        bucket = []
+        for w in candidates:
+            if str(w["id"]) in selected_ids:
+                continue
+
+            midpoint = (
+                float(w.get("start", 0) or 0)
+                + float(w.get("end", 0) or 0)
+            ) / 2.0
+
+            if bucket_index == coverage_slots - 1:
+                inside = bucket_start <= midpoint <= bucket_end
+            else:
+                inside = bucket_start <= midpoint < bucket_end
+
+            if inside:
+                bucket.append(w)
+
+        if bucket:
+            best = max(
+                bucket,
+                key=lambda w: float(w.get("score", 0) or 0),
+            )
+            selected.append(best)
+            selected_ids.add(str(best["id"]))
+
+    # Fill remaining slots with the strongest global candidates.
+    ranked = sorted(
+        candidates,
+        key=lambda w: float(w.get("score", 0) or 0),
+        reverse=True,
+    )
+
+    for w in ranked:
+        if len(selected) >= target:
+            break
+        if str(w["id"]) in selected_ids:
+            continue
+
+        selected.append(w)
+        selected_ids.add(str(w["id"]))
+
+    # Return them in chronological order for easier inspection/debugging.
+    return sorted(
+        selected,
+        key=lambda w: float(w.get("start", 0) or 0),
+    )
+
+
 def score_batches(windows, batch_size):
     """Split ``windows`` into near-equal scoring batches.
 
