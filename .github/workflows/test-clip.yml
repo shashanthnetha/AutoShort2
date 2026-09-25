@@ -197,6 +197,39 @@ jobs:
 
           find output -type f -iname "*.mp4" -print 2>/dev/null || true
 
+      - name: Prepare final Shorts
+        run: |
+          set -e
+
+          rm -rf final-shorts
+          mkdir -p final-shorts
+
+          mapfile -t clips < <(
+            find output \
+              -type f \
+              -name 'subtitled_*_clip_*.mp4' \
+              -print | sort
+          )
+
+          echo "Found ${#clips[@]} final subtitled clips"
+
+          if [ "${#clips[@]}" -eq 0 ]; then
+            echo "No subtitled clips found."
+            exit 1
+          fi
+
+          for i in "${!clips[@]}"; do
+            printf -v filename "short_%02d.mp4" "$((i + 1))"
+            cp "${clips[$i]}" "final-shorts/$filename"
+          done
+
+          echo ""
+          echo "========================================"
+          echo "FINAL SHORTS"
+          echo "========================================"
+
+          ls -lh final-shorts
+
       - name: Show backend logs
         if: always()
         run: |
@@ -207,12 +240,12 @@ jobs:
 
           docker compose logs backend --tail=300
 
-      - name: Upload generated clips
+      - name: Upload final Shorts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: generated-clips
+          name: final-shorts
           path: |
-            output/**/*.mp4
+            final-shorts/*.mp4
           retention-days: 3
           if-no-files-found: warn
