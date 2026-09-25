@@ -174,20 +174,46 @@ jobs:
               print("No clips were returned.")
               raise SystemExit(1)
 
-          for i, clip in enumerate(clips):
+          for i, clip in enumerate(clips, start=1):
+              final_start = float(clip.get("start", 0) or 0)
+              final_end = float(clip.get("end", 0) or 0)
+              final_duration = final_end - final_start
+
+              proposed = clip.get("proposed") or []
+              if len(proposed) >= 2:
+                  proposed_start = float(proposed[0] or 0)
+                  proposed_end = float(proposed[1] or 0)
+                  proposed_duration = proposed_end - proposed_start
+                  proposed_text = (
+                      f"{proposed_start:.2f}s -> {proposed_end:.2f}s "
+                      f"({proposed_duration:.2f}s)"
+                  )
+              else:
+                  proposed_text = "Not available"
+
+              score = clip.get("predicted_score", "N/A")
+              why = clip.get("why") or "No reason returned"
+              source_window = clip.get("source_window_id", "N/A")
+
               print()
               print(f"CLIP {i}")
               print("----------------------------------------")
-              print("Title:", clip.get("title"))
+              print("Title:", clip.get("title", "N/A"))
               print(
                   "YouTube title:",
-                  clip.get("video_title_for_youtube_short")
+                  clip.get("video_title_for_youtube_short", "N/A")
               )
-              print("Start:", clip.get("start"))
-              print("End:", clip.get("end"))
-              print("Video URL:", clip.get("video_url"))
+              print("Source window:", source_window)
+              print("Gemini proposed:", proposed_text)
+              print(
+                  f"Final timestamps: {final_start:.2f}s -> "
+                  f"{final_end:.2f}s"
+              )
+              print(f"Final duration: {final_duration:.2f}s")
+              print("Predicted score:", score)
+              print("Why:", why)
+              print("Video URL:", clip.get("video_url", "N/A"))
           PY
-
       - name: List generated MP4 files
         run: |
           echo ""
