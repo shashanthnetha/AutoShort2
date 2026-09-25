@@ -95,6 +95,7 @@ jobs:
           set -e
 
           echo "Waiting for OpenShorts job: $JOB_ID"
+          LOG_COUNT=0
 
           for i in {1..100}; do
 
@@ -110,10 +111,13 @@ jobs:
             echo "Status: $STATUS"
             echo "========================================"
 
-            LOGS=$(echo "$RESPONSE" | jq -r '.logs[]?')
+            TOTAL_LOGS=$(echo "$RESPONSE" | jq '.logs | length')
 
-            if [ -n "$LOGS" ]; then
-              echo "$LOGS"
+            if [ "$TOTAL_LOGS" -gt "$LOG_COUNT" ]; then
+              echo "$RESPONSE" | jq -r \
+                --argjson start "$LOG_COUNT" \
+                '.logs[$start:][]?'
+              LOG_COUNT="$TOTAL_LOGS"
             fi
 
             if [ "$STATUS" = "completed" ]; then
