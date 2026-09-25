@@ -891,6 +891,8 @@ def download_youtube_video(url, output_dir="."):
             'quiet': False, 'verbose': True, 'no_warnings': False,
             'cookiefile': cookies_path if (cookies and cookies_path) else None,
             'proxy': proxy, 'socket_timeout': 30, 'retries': 10, 'fragment_retries': 10,
+            'http_chunk_size': 2 * 1024 * 1024,
+            'continuedl': True,
             'nocheckcertificate': True, 'cachedir': False,
             # A `watch?v=X&list=...` link is the one video the user was
             # watching, not the playlist: without this yt-dlp downloads every
