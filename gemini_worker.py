@@ -292,6 +292,11 @@ Choose the BEST short clips from these shortlisted candidate windows.
 CLIP RULES:
 - Return only valid JSON.
 - Each clip must be {min_secs:g} to {max_secs:g} seconds long, in absolute seconds from the start of the source video.
+- TARGET LENGTH: Prefer clips around 25–45 seconds when the material supports it.
+- Do not shorten a clip just to make it punchier.
+- Include enough setup to understand the moment and enough aftermath to reach the payoff.
+- Use 15–24 seconds only when the moment is genuinely complete without additional context.
+- Use 45–60 seconds when the setup and payoff require it.
 - Stay within the candidate window boundaries.
 - THE 2-SECOND RULE: the clip MUST open on its strongest moment. If the first
   2 seconds would not stop a cold viewer from scrolling, move the start or skip the clip.
