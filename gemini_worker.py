@@ -337,13 +337,35 @@ CLIP RULES:
   A brilliant moment that needs the previous five minutes is not a clip.
   Fix this by moving the START earlier, never by cutting the ending short: a
   clip that loses its payoff to gain context has traded down.
-- HOW MANY: return {min_clips} to {max_clips} clips. Work through EVERY candidate
-  window — they were already scored as the best moments in the video, so a window
-  that yields nothing should be the exception, not the norm. Two or three clips
-  from one window are fine when they are genuinely different moments. The rules
-  above let you skip a weak clip; they are not a licence to return one clip and
-  stop. Only fall short of {min_clips} when the material truly does not hold
-  them, and never pad with a clip you would not publish yourself.
+- HOW MANY: return {min_clips} to {max_clips} clips.
+
+  Work through EVERY candidate window before deciding the final list.
+
+  Each candidate was already selected because it scored highly in the video-wide
+  scoring pass. Do NOT discard a candidate simply because another window has a
+  stronger viral hook.
+
+  Candidates contain separate VIRAL and IMPORTANCE scores:
+  - VIRAL SCORE measures standalone scroll-stopping potential.
+  - IMPORTANCE SCORE protects key events, answers, reveals, demonstrations,
+    results, lessons, conclusions, and other moments that matter to the source.
+
+  When choosing between otherwise similar candidates, prefer the one with the
+  stronger combined value of viral potential and importance.
+
+  A high-importance moment should be preserved when it can be made into a
+  standalone clip by adjusting the START to include the necessary setup.
+
+  Only skip a candidate when it genuinely cannot become a coherent,
+  self-contained clip, is redundant with a stronger clip, or has no meaningful
+  payoff.
+
+  Do NOT return fewer than {min_clips} merely because some candidates are less
+  flashy. Only fall below {min_clips} when the source genuinely cannot support
+  that many publishable clips.
+
+  Two or three clips from one window are allowed only when they are genuinely
+  different moments.
 - DIVERSITY: never return two clips that make the same point, tell the same
   story, or land the same joke — even across different windows. Pick the
   stronger one and drop the other. Two clips on the same broad topic are fine
