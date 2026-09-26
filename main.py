@@ -1770,6 +1770,27 @@ def get_viral_clips(transcript_result, video_duration):
         # more candidates without exploding the detail call.
         scored.sort(key=lambda w: w.get("score", 0), reverse=True)
         by_id = {w["id"]: w for w in windows}
+        print("\n===== WINDOW SCORING =====")
+
+        for w in sorted(
+            scored,
+            key=lambda x: float(x.get("start", 0) or 0),
+        ):
+            viral = float(w.get("score", 0) or 0)
+            importance = float(w.get("importance_score", 0) or 0)
+            combined = (viral * 0.65) + (importance * 0.35)
+        
+            print(
+                f'Window {w.get("id")}: '
+                f'{float(w.get("start", 0) or 0):.1f}s - '
+                f'{float(w.get("end", 0) or 0):.1f}s | '
+                f'Viral={viral:.0f} | '
+                f'Importance={importance:.0f} | '
+                f'Combined={combined:.1f} | '
+                f'{w.get("reason", "")}'
+            )
+        
+        print("===========================\n")
         
         shortlist = diverse_shortlist(
             scored_windows=scored,
