@@ -24,6 +24,7 @@ class ScoredWindowModel(BaseModel):
     start: float
     end: float
     score: int
+    importance_score: int
     reason: str
 
 
@@ -248,37 +249,64 @@ def _log(message: str) -> None:
     stream.flush()
 
 SCORE_PROMPT_TEMPLATE = """
-You are a senior short-form video strategist.
-RANK these candidate windows by how well each would work as a standalone short.
+You are a senior short-form video strategist analyzing sections of a long-form video.
 
-Rules:
+For EVERY candidate window, evaluate TWO DIFFERENT things:
+
+1. VIRAL SCORE (0-100)
+   How likely is this moment to work as a standalone short and make a cold viewer
+   keep watching?
+
+2. IMPORTANCE SCORE (0-100)
+   How important is this moment to the actual substance of the video?
+   Would a viewer miss a key idea, answer, reveal, demonstration, result, lesson,
+   conclusion, or major story beat if this section were removed?
+
+These scores are intentionally separate. A moment can be highly important but not
+immediately flashy, or highly viral but not very important.
+
+VIRAL SCORING:
+- THE 2-SECOND TEST: would the first 2 seconds make a cold viewer keep watching?
+- Prefer strong hooks, conflict, surprise, emotion, novelty, big numbers,
+  controversial claims, unusual facts, or clear payoffs.
+- Reserve 70+ for genuinely strong short-form moments.
+- Put filler, housekeeping, rambling transitions, generic introductions,
+  repetitive explanations, and low-signal padding below 30.
+
+IMPORTANCE SCORING:
+- High score: major reveal, key answer, central argument, important lesson,
+  critical demonstration, concrete result, unique insight, decisive moment,
+  important conclusion, or the part that best explains WHY something matters.
+- Medium score: useful supporting explanation or meaningful context.
+- Low score: repetition, setup without payoff, housekeeping, greetings,
+  sponsor material, filler, transitions, or information already established.
+- Do NOT give a high importance score merely because the topic sounds interesting.
+  Judge whether this specific window contains important substance.
+
+IMPORTANT:
+- Score EVERY input window exactly once.
+- Do not drop any window.
+- Use the full 0-100 ranges for both scores.
+- Keep the two scores independent.
+- `reason` must briefly explain what makes this specific window notable.
 - Return only valid JSON.
-- Score EVERY window in this batch: exactly one entry per input window, with
-  the id you were given. Do not drop the weak ones — say they are weak.
-- `score` must be an integer from 0 to 100, and the ranking is what matters:
-  use the whole range instead of clustering. Most windows of a normal video
-  are not clippable, so reserve 70+ for the ones that pass the test below,
-  and put weak filler, housekeeping, outros, rambling transitions and
-  low-signal padding under 30 even when the topic is interesting.
-- THE 2-SECOND TEST is the main criterion: would the first 2 seconds of this
-  moment force a cold viewer (no context) to keep watching? Windows that only
-  work with prior context score low.
-- Prefer windows with strong hooks, conflict, surprise, outrage, emotion,
-  novelty, big numbers, or a clear payoff.
 
 TRANSCRIPT_LANGUAGE: {language}
 VIDEO_DURATION_SECONDS: {video_duration}
+
 WINDOWS_JSON:
 {windows_json}
 
 Return only:
+
 {{
   "windows": [
     {{
       "id": "<window id>",
       "start": <number>,
       "end": <number>,
-      "score": <integer 0-100>,
+      "score": <viral score 0-100>,
+      "importance_score": <importance score 0-100>,
       "reason": "<very short reason>"
     }}
   ]
