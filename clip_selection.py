@@ -95,11 +95,23 @@ def diverse_shortlist(scored_windows, all_windows, target):
         if w.get("id")
     }
 
-    candidates = [
-        scored_by_id[w["id"]]
+    original_by_id = {
+        str(w.get("id")): w
         for w in (all_windows or [])
-        if w.get("id") in scored_by_id
-    ]
+        if w.get("id")
+    }
+
+    candidates = []
+
+    for window_id, scored in scored_by_id.items():
+        original = original_by_id.get(window_id)
+        if original is None:
+            continue
+
+        candidate = dict(original)
+        candidate["score"] = scored.get("score", 0)
+        candidate["reason"] = scored.get("reason", "")
+        candidates.append(candidate)
 
     if not candidates:
         return []
@@ -110,7 +122,7 @@ def diverse_shortlist(scored_windows, all_windows, target):
     if len(candidates) <= target * 1.5:
         return sorted(
             candidates,
-            key=lambda w: float(w.get("score", 0)),
+            key=lambda w: float(w.get("score", 0) or 0),
             reverse=True,
         )[:target]
 
@@ -118,8 +130,14 @@ def diverse_shortlist(scored_windows, all_windows, target):
     coverage_slots = max(1, min(target, round(target * 0.7)))
     global_slots = target - coverage_slots
 
-    min_time = min(float(w.get("start", 0) or 0) for w in candidates)
-    max_time = max(float(w.get("end", 0) or 0) for w in candidates)
+    min_time = min(
+        float(w.get("start", 0) or 0)
+        for w in candidates
+    )
+    max_time = max(
+        float(w.get("end", 0) or 0)
+        for w in candidates
+    )
     span = max(max_time - min_time, 1.0)
 
     selected = []
@@ -127,12 +145,21 @@ def diverse_shortlist(scored_windows, all_windows, target):
 
     # Pick the strongest window from each evenly spaced time bucket.
     for bucket_index in range(coverage_slots):
-        bucket_start = min_time + span * bucket_index / coverage_slots
-        bucket_end = min_time + span * (bucket_index + 1) / coverage_slots
+        bucket_start = (
+            min_time
+            + span * bucket_index / coverage_slots
+        )
+        bucket_end = (
+            min_time
+            + span * (bucket_index + 1) / coverage_slots
+        )
 
         bucket = []
+
         for w in candidates:
-            if str(w["id"]) in selected_ids:
+            window_id = str(w["id"])
+
+            if window_id in selected_ids:
                 continue
 
             midpoint = (
@@ -166,18 +193,20 @@ def diverse_shortlist(scored_windows, all_windows, target):
     for w in ranked:
         if len(selected) >= target:
             break
-        if str(w["id"]) in selected_ids:
+
+        window_id = str(w["id"])
+
+        if window_id in selected_ids:
             continue
 
         selected.append(w)
-        selected_ids.add(str(w["id"]))
+        selected_ids.add(window_id)
 
-    # Return them in chronological order for easier inspection/debugging.
+    # Keep chronological order for easier inspection/debugging.
     return sorted(
         selected,
         key=lambda w: float(w.get("start", 0) or 0),
     )
-
 
 def score_batches(windows, batch_size):
     """Split ``windows`` into near-equal scoring batches.
