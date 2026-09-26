@@ -82,12 +82,12 @@ def shortlist_target(video_duration):
 
 
 def diverse_shortlist(scored_windows, all_windows, target):
-    """Select strong candidates while preserving coverage across the video.
+    """Select strong candidates using viral potential, content importance,
+    and timeline coverage.
 
-    Most candidates come from evenly distributed time buckets so an important
-    moment late in a long video is not lost just because earlier windows have
-    slightly higher scores. A smaller global-score pool preserves exceptionally
-    strong moments wherever they occur.
+    Viral potential remains the stronger signal, while importance protects
+    meaningful moments that may be less flashy. Timeline coverage prevents
+    strong sections from clustering in only one part of a long video.
     """
     scored_by_id = {
         str(w.get("id")): w
@@ -105,12 +105,15 @@ def diverse_shortlist(scored_windows, all_windows, target):
 
     for window_id, scored in scored_by_id.items():
         original = original_by_id.get(window_id)
+
         if original is None:
             continue
 
         candidate = dict(original)
         candidate["score"] = scored.get("score", 0)
+        candidate["importance_score"] = scored.get("importance_score", 0)
         candidate["reason"] = scored.get("reason", "")
+
         candidates.append(candidate)
 
     if not candidates:
@@ -118,37 +121,51 @@ def diverse_shortlist(scored_windows, all_windows, target):
 
     target = max(1, min(int(target or 1), len(candidates)))
 
-    # For short videos, the existing global ranking is already sufficient.
+    def selection_score(window):
+        viral = float(window.get("score", 0) or 0)
+        importance = float(window.get("importance_score", 0) or 0)
+
+        # Viral potential remains the stronger signal, while importance
+        # protects meaningful moments that are less flashy.
+        return (viral * 0.65) + (importance * 0.35)
+
+    # For short videos, use the combined score directly.
     if len(candidates) <= target * 1.5:
         return sorted(
             candidates,
-            key=lambda w: float(w.get("score", 0) or 0),
+            key=selection_score,
             reverse=True,
         )[:target]
 
     # Reserve about 70% of the slots for timeline coverage.
-    coverage_slots = max(1, min(target, round(target * 0.7)))
-    global_slots = target - coverage_slots
+    coverage_slots = max(
+        1,
+        min(target, round(target * 0.7)),
+    )
 
     min_time = min(
         float(w.get("start", 0) or 0)
         for w in candidates
     )
+
     max_time = max(
         float(w.get("end", 0) or 0)
         for w in candidates
     )
+
     span = max(max_time - min_time, 1.0)
 
     selected = []
     selected_ids = set()
 
-    # Pick the strongest window from each evenly spaced time bucket.
+    # Pick the strongest combined-score window from each
+    # evenly spaced time bucket.
     for bucket_index in range(coverage_slots):
         bucket_start = (
             min_time
             + span * bucket_index / coverage_slots
         )
+
         bucket_end = (
             min_time
             + span * (bucket_index + 1) / coverage_slots
@@ -168,9 +185,13 @@ def diverse_shortlist(scored_windows, all_windows, target):
             ) / 2.0
 
             if bucket_index == coverage_slots - 1:
-                inside = bucket_start <= midpoint <= bucket_end
+                inside = (
+                    bucket_start <= midpoint <= bucket_end
+                )
             else:
-                inside = bucket_start <= midpoint < bucket_end
+                inside = (
+                    bucket_start <= midpoint < bucket_end
+                )
 
             if inside:
                 bucket.append(w)
@@ -178,15 +199,17 @@ def diverse_shortlist(scored_windows, all_windows, target):
         if bucket:
             best = max(
                 bucket,
-                key=lambda w: float(w.get("score", 0) or 0),
+                key=selection_score,
             )
+
             selected.append(best)
             selected_ids.add(str(best["id"]))
 
-    # Fill remaining slots with the strongest global candidates.
+    # Fill remaining slots with the strongest combined-score
+    # candidates from the entire video.
     ranked = sorted(
         candidates,
-        key=lambda w: float(w.get("score", 0) or 0),
+        key=selection_score,
         reverse=True,
     )
 
