@@ -24,7 +24,7 @@ class ScoredWindowModel(BaseModel):
     start: float
     end: float
     score: int
-    importance_score: int
+    importance_score: int = 0
     reason: str
 
 
@@ -251,7 +251,7 @@ def _log(message: str) -> None:
 SCORE_PROMPT_TEMPLATE = """
 You are a senior short-form video strategist analyzing sections of a long-form video.
 
-For EVERY candidate window, evaluate TWO DIFFERENT things:
+Score EVERY window. For EVERY candidate window, evaluate TWO DIFFERENT things:
 
 1. VIRAL SCORE (0-100)
    How likely is this moment to work as a standalone short and make a cold viewer
