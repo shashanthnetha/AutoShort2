@@ -140,7 +140,7 @@ def diverse_shortlist(scored_windows, all_windows, target):
     # Reserve about 70% of the slots for timeline coverage.
     coverage_slots = max(
         1,
-        min(target, round(target * 0.7)),
+        min(target, round(target * 0.4)),
     )
 
     min_time = min(
