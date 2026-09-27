@@ -1797,6 +1797,27 @@ def get_viral_clips(transcript_result, video_duration):
             all_windows=windows,
             target=target,
         )
+        print("\n===== SHORTLIST =====")
+
+        for w in sorted(
+            shortlist,
+            key=lambda x: float(x.get("start", 0) or 0),
+        ):
+            viral = float(w.get("score", 0) or 0)
+            importance = float(w.get("importance_score", 0) or 0)
+            combined = (viral * 0.65) + (importance * 0.35)
+        
+            print(
+                f'Window {w.get("id")}: '
+                f'{float(w.get("start", 0) or 0):.1f}s - '
+                f'{float(w.get("end", 0) or 0):.1f}s | '
+                f'Viral={viral:.0f} | '
+                f'Importance={importance:.0f} | '
+                f'Combined={combined:.1f} | '
+                f'{w.get("reason", "")}'
+            )
+        
+        print("====================\n")
         
         if not shortlist:
             shortlist = windows[:target]  # scoring returned nothing usable
