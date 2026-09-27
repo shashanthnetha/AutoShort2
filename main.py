@@ -1885,6 +1885,48 @@ def get_viral_clips(transcript_result, video_duration):
             print(f"   Dropped {len(shorts) - len(deduped)} clip(s) overlapping a "
                   f"better-scored one.")
             shorts = deduped
+                # Final diversity diagnostic: identify clips coming from nearby
+        # transcript windows. This helps prevent multiple Shorts from the same
+        # local story/event while keeping the highest-scoring moment.
+        print("\n===== FINAL CLIP DIVERSITY =====")
+
+        def _window_number(window_id):
+            try:
+                return int(str(window_id).rsplit("_", 1)[-1])
+            except (TypeError, ValueError):
+                return None
+
+        diversity_order = sorted(
+            shorts,
+            key=lambda s: float(s.get("predicted_score", 0) or 0),
+            reverse=True,
+        )
+
+        kept_window_numbers = []
+
+        for clip in diversity_order:
+            window_id = clip.get("source_window_id")
+            window_number = _window_number(window_id)
+
+            nearby = False
+
+            if window_number is not None:
+                nearby = any(
+                    abs(window_number - kept_number) <= 1
+                    for kept_number in kept_window_numbers
+                )
+
+            print(
+                f'Clip window={window_id} | '
+                f'predicted={float(clip.get("predicted_score", 0) or 0):.0f} | '
+                f'nearby_selected={nearby} | '
+                f'{clip.get("video_title_for_youtube_short", "")}'
+            )
+
+            if window_number is not None and not nearby:
+                kept_window_numbers.append(window_number)
+
+        print("===============================\n")
 
         # Aggregate cost across both passes.
         cost_analysis = None
