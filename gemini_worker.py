@@ -366,10 +366,30 @@ CLIP RULES:
 
   Two or three clips from one window are allowed only when they are genuinely
   different moments.
-- DIVERSITY: never return two clips that make the same point, tell the same
-  story, or land the same joke — even across different windows. Pick the
-  stronger one and drop the other. Two clips on the same broad topic are fine
-  as long as each lands its own moment.
+- DIVERSITY: treat each final clip as competing for a limited publishing slot.
+
+  Do NOT return multiple clips that are essentially the same story, event,
+  narrative beat, or payoff.
+
+  Near-duplicate examples that should usually collapse into ONE clip:
+  - several wickets from the same collapse
+  - several shots from the same scoring sequence
+  - multiple clips describing the same momentum shift
+  - multiple clips explaining the same argument or revelation
+  - multiple clips covering adjacent parts of one continuous event
+
+  When several candidate windows describe the same underlying event, choose
+  the single strongest clip based on hook strength, importance, payoff, and
+  standalone clarity.
+
+  Prefer variety across the final set: major breakthrough, surprising moment,
+  tactical turning point, emotional reaction, failure/collapse, comeback,
+  decisive result, or final payoff when the source contains them.
+
+  Two clips on the same broad topic are allowed only when they represent
+  clearly different events with clearly different payoffs.
+
+  Favor distinct events over multiple clips from one continuous sequence.
 
 HOOK PLAYBOOK — pick the strongest fitting pattern for `viral_hook_text` (max 10 words):
 - Open question: "Why does everyone get this wrong?"
