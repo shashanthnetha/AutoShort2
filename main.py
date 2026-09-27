@@ -1885,10 +1885,13 @@ def get_viral_clips(transcript_result, video_duration):
             print(f"   Dropped {len(shorts) - len(deduped)} clip(s) overlapping a "
                   f"better-scored one.")
             shorts = deduped
-                # Final diversity diagnostic: identify clips coming from nearby
-        # transcript windows. This helps prevent multiple Shorts from the same
-        # local story/event while keeping the highest-scoring moment.
-        print("\n===== FINAL CLIP DIVERSITY =====")
+                # Final diversity guard.
+        #
+        # Gemini can return multiple clips from the same local story even when
+        # their timestamps do not overlap. Keep the strongest clip from each
+        # nearby sequence, then backfill missing clip slots from shortlist
+        # windows that were never used by the first detail pass.
+        FINAL_DIVERSITY_GAP_SECONDS = 30.0
 
         def _window_number(window_id):
             try:
@@ -1896,37 +1899,237 @@ def get_viral_clips(transcript_result, video_duration):
             except (TypeError, ValueError):
                 return None
 
-        diversity_order = sorted(
-            shorts,
-            key=lambda s: float(s.get("predicted_score", 0) or 0),
-            reverse=True,
-        )
+        def _clip_time_gap(a, b):
+            a_start = float(a.get("start", 0) or 0)
+            a_end = float(a.get("end", 0) or 0)
+            b_start = float(b.get("start", 0) or 0)
+            b_end = float(b.get("end", 0) or 0)
 
-        kept_window_numbers = []
+            if a_end < b_start:
+                return b_start - a_end
 
-        for clip in diversity_order:
-            window_id = clip.get("source_window_id")
-            window_number = _window_number(window_id)
+            if b_end < a_start:
+                return a_start - b_end
 
-            nearby = False
+            return 0.0
 
-            if window_number is not None:
-                nearby = any(
-                    abs(window_number - kept_number) <= 1
-                    for kept_number in kept_window_numbers
+        def _same_local_sequence(a, b):
+            gap = _clip_time_gap(a, b)
+
+            if gap > FINAL_DIVERSITY_GAP_SECONDS:
+                return False
+
+            a_window = _window_number(a.get("source_window_id"))
+            b_window = _window_number(b.get("source_window_id"))
+
+            # Window IDs are chronological. Requiring adjacent windows as well
+            # as a small time gap avoids deleting genuinely separate events.
+            if a_window is not None and b_window is not None:
+                return abs(a_window - b_window) <= 1
+
+            # Fall back to timestamp proximity when a source window ID is absent.
+            return True
+
+        def _apply_final_diversity(items):
+            ranked = sorted(
+                items,
+                key=lambda s: float(s.get("predicted_score", 0) or 0),
+                reverse=True,
+            )
+
+            kept = []
+            dropped = []
+
+            for clip in ranked:
+                duplicate_sequence = any(
+                    _same_local_sequence(clip, existing)
+                    for existing in kept
+                )
+
+                if duplicate_sequence:
+                    dropped.append(clip)
+                else:
+                    kept.append(clip)
+
+            return kept, dropped
+
+        diverse_shorts, dropped_for_diversity = _apply_final_diversity(shorts)
+
+        if dropped_for_diversity:
+            print("\n===== FINAL CLIP DIVERSITY =====")
+            print(
+                f"Dropped {len(dropped_for_diversity)} clip(s) "
+                f"from nearby story sequences."
+            )
+
+            for clip in dropped_for_diversity:
+                print(
+                    f'  Dropped {clip.get("source_window_id")} | '
+                    f'predicted={float(clip.get("predicted_score", 0) or 0):.0f} | '
+                    f'{clip.get("video_title_for_youtube_short", "")}'
                 )
 
             print(
-                f'Clip window={window_id} | '
-                f'predicted={float(clip.get("predicted_score", 0) or 0):.0f} | '
-                f'nearby_selected={nearby} | '
-                f'{clip.get("video_title_for_youtube_short", "")}'
+                f"Kept {len(diverse_shorts)} diverse clip(s) "
+                f"from {len(shorts)} initial clip(s)."
+            )
+            print("===============================\n")
+
+        # If diversity removed too many clips, backfill from shortlist windows
+        # that did NOT already produce a clip. This prevents us from asking
+        # Gemini to revisit a window we just rejected as repetitive.
+        if len(diverse_shorts) < min_clips:
+            missing = min_clips - len(diverse_shorts)
+
+            already_attempted_ids = {
+                str(s.get("source_window_id") or "")
+                for s in shorts
+            }
+
+            spare = [
+                w
+                for w in shortlist
+                if str(w.get("id") or "") not in already_attempted_ids
+            ]
+
+            spare.sort(
+                key=lambda w: (
+                    float(w.get("score", 0) or 0) * 0.65
+                    + float(w.get("importance_score", 0) or 0) * 0.35
+                ),
+                reverse=True,
             )
 
-            if window_number is not None and not nearby:
-                kept_window_numbers.append(window_number)
+            if spare:
+                print(
+                    f"   Diversity left {len(diverse_shorts)} clip(s) "
+                    f"but minimum is {min_clips}; "
+                    f"asking {len(spare)} unused shortlist window(s) "
+                    f"for {missing} replacement clip(s)."
+                )
 
-        print("===============================\n")
+                existing_context = [
+                    {
+                        "source_window_id": s.get("source_window_id"),
+                        "start": s.get("start"),
+                        "end": s.get("end"),
+                        "predicted_score": s.get("predicted_score"),
+                        "title": s.get("video_title_for_youtube_short", ""),
+                    }
+                    for s in diverse_shorts
+                ]
+
+                existing_context_json = json.dumps(
+                    existing_context,
+                    ensure_ascii=False,
+                )
+
+                def _backfill_prompt_for(ws):
+                    prompt = gemini_worker.DETAIL_PROMPT_TEMPLATE.format(
+                        video_duration=video_duration,
+                        language=language,
+                        min_clips=missing,
+                        max_clips=missing,
+                        min_secs=min_secs,
+                        max_secs=max_secs,
+                        windows_json=json.dumps(
+                            _payload(ws),
+                            ensure_ascii=False,
+                        ),
+                    )
+
+                    guard = f"""
+BACKFILL MODE — EXISTING FINAL CLIPS
+
+These clips have already been kept:
+{existing_context_json}
+
+For this backfill call:
+- Return only genuinely different moments from the candidate windows.
+- Do NOT repeat the same event, story beat, wicket sequence, scoring sequence,
+  momentum shift, or payoff covered by an existing clip.
+- Do NOT return a clip whose timestamps overlap an existing clip.
+- Prefer a distinct event from a different part of the source video.
+- The purpose of this call is to fill missing publishing slots after diversity
+  filtering, not to recreate clips that were already kept.
+"""
+
+                    marker = "Return only:"
+
+                    if marker in prompt:
+                        return prompt.replace(
+                            marker,
+                            guard + "\n" + marker,
+                            1,
+                        )
+
+                    return prompt + "\n" + guard
+
+                extra = _run_stage_split(
+                    client,
+                    model_name,
+                    spare,
+                    _backfill_prompt_for,
+                    gemini_worker.DetailResponse,
+                    "shorts",
+                    costs,
+                    "diversity-backfill",
+                )
+
+                if extra:
+                    # Snap backfill clips before comparing them to the clips
+                    # already kept.
+                    for s in extra:
+                        s["proposed"] = [
+                            s.get("start", 0),
+                            s.get("end", 0),
+                        ]
+
+                        ns, ne = snap_clip_to_words(
+                            s.get("start", 0),
+                            s.get("end", 0),
+                            words,
+                            video_duration,
+                            min_duration=min_secs,
+                            max_duration=max_secs,
+                        )
+
+                        s["start"], s["end"] = ns, ne
+
+                    combined = diverse_shorts + extra
+
+                    # Remove any accidental physical overlap first.
+                    combined = dedupe_overlapping(combined)
+
+                    # Then enforce the same local-sequence rule again.
+                    diverse_shorts, second_drops = _apply_final_diversity(
+                        combined
+                    )
+
+                    print(
+                        f"   Backfill returned {len(extra)} clip(s); "
+                        f"final diverse set now has {len(diverse_shorts)}."
+                    )
+
+        # Never exceed the configured maximum after backfill.
+        if len(diverse_shorts) > max_clips:
+            diverse_shorts = sorted(
+                diverse_shorts,
+                key=lambda s: float(
+                    s.get("predicted_score", 0) or 0
+                ),
+                reverse=True,
+            )[:max_clips]
+
+        shorts = sorted(
+            diverse_shorts,
+            key=lambda s: float(s.get("start", 0) or 0),
+        )
+
+        print(
+            f"   Final diverse clip count: {len(shorts)} "
+            f"(target {min_clips}-{max_clips})."
+        )
 
         # Aggregate cost across both passes.
         cost_analysis = None
