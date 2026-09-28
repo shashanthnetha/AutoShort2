@@ -1765,6 +1765,64 @@ def get_viral_clips(transcript_result, video_duration):
             scored.extend(_run_stage_split(
                 client, model_name, batch, _score_prompt,
                 gemini_worker.ScoreResponse, "windows", costs, "score"))
+                  # --- Pass 1.5: globally group windows by underlying event/story ---
+        #
+        # The scoring pass is intentionally batched for context safety, but
+        # event grouping needs to see the whole video so windows from the same
+        # story beat can be recognized even when they are several windows apart.
+        event_groups = {}
+
+        def _event_group_prompt(ws):
+            return gemini_worker.EVENT_GROUP_PROMPT_TEMPLATE.format(
+                windows_json=json.dumps(
+                    _payload(ws),
+                    ensure_ascii=False,
+                )
+            )
+
+        grouped = _run_stage_split(
+            client,
+            model_name,
+            windows,
+            _event_group_prompt,
+            gemini_worker.EventGroupResponse,
+            "groups",
+            costs,
+            "event-group",
+        )
+
+        for item in grouped:
+            window_id = str(item.get("id") or "")
+
+            if not window_id:
+                continue
+
+            try:
+                group_id = int(item.get("group_id"))
+            except (TypeError, ValueError):
+                continue
+
+            event_groups[window_id] = group_id
+
+        print("\n===== EVENT GROUPS =====")
+
+        groups_for_log = {}
+
+        for window_id, group_id in event_groups.items():
+            groups_for_log.setdefault(
+                group_id,
+                [],
+            ).append(window_id)
+
+        for group_id in sorted(groups_for_log):
+            members = groups_for_log[group_id]
+
+            print(
+                f"Group {group_id}: "
+                + ", ".join(sorted(members))
+            )
+
+        print("========================\n")
 
         # Shortlist the top windows; scale with duration so long videos surface
         # more candidates without exploding the detail call.
@@ -1787,6 +1845,7 @@ def get_viral_clips(transcript_result, video_duration):
                 f'Viral={viral:.0f} | '
                 f'Importance={importance:.0f} | '
                 f'Combined={combined:.1f} | '
+                f'EventGroup={w.get("event_group", "-")} | '
                 f'{w.get("reason", "")}'
             )
         
@@ -1796,6 +1855,7 @@ def get_viral_clips(transcript_result, video_duration):
             scored_windows=scored,
             all_windows=windows,
             target=target,
+            event_groups=event_groups,
         )
         print("\n===== SHORTLIST =====")
 
