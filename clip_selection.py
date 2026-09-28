@@ -81,13 +81,19 @@ def shortlist_target(video_duration):
     return max(3, min(10, int(seconds // 90) + 2))
 
 
-def diverse_shortlist(scored_windows, all_windows, target):
-    """Select strong candidates using viral potential, content importance,
-    and timeline coverage.
+def diverse_shortlist(
+    scored_windows,
+    all_windows,
+    target,
+    event_groups=None,
+):
+    """Select strong candidates using viral potential, importance,
+    timeline coverage, and event diversity.
 
-    Viral potential remains the stronger signal, while importance protects
-    meaningful moments that may be less flashy. Timeline coverage prevents
-    strong sections from clustering in only one part of a long video.
+    ``event_groups`` maps window IDs to semantic event-group IDs produced by
+    the global event-grouping pass. A group may contribute at most two windows
+    to the shortlist so one underlying story beat cannot consume most of the
+    available slots.
     """
     scored_by_id = {
         str(w.get("id")): w
@@ -101,6 +107,12 @@ def diverse_shortlist(scored_windows, all_windows, target):
         if w.get("id")
     }
 
+    event_groups = {
+        str(window_id): int(group_id)
+        for window_id, group_id in (event_groups or {}).items()
+        if window_id and group_id is not None
+    }
+
     candidates = []
 
     for window_id, scored in scored_by_id.items():
@@ -111,36 +123,101 @@ def diverse_shortlist(scored_windows, all_windows, target):
 
         candidate = dict(original)
         candidate["score"] = scored.get("score", 0)
-        candidate["importance_score"] = scored.get("importance_score", 0)
+        candidate["importance_score"] = scored.get(
+            "importance_score",
+            0,
+        )
         candidate["reason"] = scored.get("reason", "")
+        candidate["event_group"] = event_groups.get(window_id)
 
         candidates.append(candidate)
 
     if not candidates:
         return []
 
-    target = max(1, min(int(target or 1), len(candidates)))
+    target = max(
+        1,
+        min(int(target or 1), len(candidates)),
+    )
 
     def selection_score(window):
         viral = float(window.get("score", 0) or 0)
-        importance = float(window.get("importance_score", 0) or 0)
+        importance = float(
+            window.get("importance_score", 0) or 0
+        )
 
-        # Viral potential remains the stronger signal, while importance
-        # protects meaningful moments that are less flashy.
-        return (viral * 0.65) + (importance * 0.35)
+        return (
+            (viral * 0.65)
+            + (importance * 0.35)
+        )
 
-    # For short videos, use the combined score directly.
+    ranked = sorted(
+        candidates,
+        key=selection_score,
+        reverse=True,
+    )
+
+    # At most two windows from the same semantic event group.
+    # Windows without a valid group are treated independently.
+    MAX_PER_EVENT_GROUP = 2
+
+    selected = []
+    selected_ids = set()
+    group_counts = {}
+
+    def can_select(window):
+        window_id = str(window["id"])
+
+        if window_id in selected_ids:
+            return False
+
+        group_id = window.get("event_group")
+
+        if group_id is None:
+            return True
+
+        return (
+            group_counts.get(group_id, 0)
+            < MAX_PER_EVENT_GROUP
+        )
+
+    def add_window(window):
+        window_id = str(window["id"])
+
+        selected.append(window)
+        selected_ids.add(window_id)
+
+        group_id = window.get("event_group")
+
+        if group_id is not None:
+            group_counts[group_id] = (
+                group_counts.get(group_id, 0) + 1
+            )
+
+    # If the source is short enough that almost every candidate will survive,
+    # use combined ranking directly, while still respecting event diversity.
     if len(candidates) <= target * 1.5:
-        return sorted(
-            candidates,
-            key=selection_score,
-            reverse=True,
-        )[:target]
+        for window in ranked:
+            if len(selected) >= target:
+                break
 
-    # Reserve about 70% of the slots for timeline coverage.
+            if can_select(window):
+                add_window(window)
+
+        return sorted(
+            selected,
+            key=lambda w: float(
+                w.get("start", 0) or 0
+            ),
+        )
+
+    # Reserve about 40% of the shortlist for timeline coverage.
     coverage_slots = max(
         1,
-        min(target, round(target * 0.4)),
+        min(
+            target,
+            round(target * 0.4),
+        ),
     )
 
     min_time = min(
@@ -153,14 +230,16 @@ def diverse_shortlist(scored_windows, all_windows, target):
         for w in candidates
     )
 
-    span = max(max_time - min_time, 1.0)
+    span = max(
+        max_time - min_time,
+        1.0,
+    )
 
-    selected = []
-    selected_ids = set()
-
-    # Pick the strongest combined-score window from each
-    # evenly spaced time bucket.
+    # Pick the strongest valid candidate from each time bucket.
     for bucket_index in range(coverage_slots):
+        if len(selected) >= target:
+            break
+
         bucket_start = (
             min_time
             + span * bucket_index / coverage_slots
@@ -173,62 +252,52 @@ def diverse_shortlist(scored_windows, all_windows, target):
 
         bucket = []
 
-        for w in candidates:
-            window_id = str(w["id"])
-
-            if window_id in selected_ids:
+        for window in candidates:
+            if not can_select(window):
                 continue
 
             midpoint = (
-                float(w.get("start", 0) or 0)
-                + float(w.get("end", 0) or 0)
+                float(window.get("start", 0) or 0)
+                + float(window.get("end", 0) or 0)
             ) / 2.0
 
             if bucket_index == coverage_slots - 1:
                 inside = (
-                    bucket_start <= midpoint <= bucket_end
+                    bucket_start
+                    <= midpoint
+                    <= bucket_end
                 )
             else:
                 inside = (
-                    bucket_start <= midpoint < bucket_end
+                    bucket_start
+                    <= midpoint
+                    < bucket_end
                 )
 
             if inside:
-                bucket.append(w)
+                bucket.append(window)
 
         if bucket:
             best = max(
                 bucket,
                 key=selection_score,
             )
+            add_window(best)
 
-            selected.append(best)
-            selected_ids.add(str(best["id"]))
-
-    # Fill remaining slots with the strongest combined-score
-    # candidates from the entire video.
-    ranked = sorted(
-        candidates,
-        key=selection_score,
-        reverse=True,
-    )
-
-    for w in ranked:
+    # Fill remaining slots globally by combined score, while respecting
+    # semantic event diversity.
+    for window in ranked:
         if len(selected) >= target:
             break
 
-        window_id = str(w["id"])
+        if can_select(window):
+            add_window(window)
 
-        if window_id in selected_ids:
-            continue
-
-        selected.append(w)
-        selected_ids.add(window_id)
-
-    # Keep chronological order for easier inspection/debugging.
     return sorted(
         selected,
-        key=lambda w: float(w.get("start", 0) or 0),
+        key=lambda w: float(
+            w.get("start", 0) or 0
+        ),
     )
 
 def score_batches(windows, batch_size):
