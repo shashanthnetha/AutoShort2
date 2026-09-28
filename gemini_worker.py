@@ -32,6 +32,15 @@ class ScoreResponse(BaseModel):
     windows: List[ScoredWindowModel]
 
 
+class EventGroupAssignment(BaseModel):
+    id: str
+    group_id: int
+
+
+class EventGroupResponse(BaseModel):
+    groups: List[EventGroupAssignment]
+
+
 class DetailClipModel(BaseModel):
     start: float
     end: float
@@ -308,6 +317,48 @@ Return only:
       "score": <viral score 0-100>,
       "importance_score": <importance score 0-100>,
       "reason": "<very short reason>"
+    }}
+  ]
+}}
+"""
+
+EVENT_GROUP_PROMPT_TEMPLATE = """
+You are a senior short-form video editor organizing candidate moments from ONE
+long-form video before final clip selection.
+
+Group candidate windows that belong to the SAME underlying event, story beat,
+or continuous narrative moment.
+
+IMPORTANT:
+- Assign EVERY window exactly ONE group_id.
+- Use the SAME group_id for windows describing the same underlying event.
+- Use DIFFERENT group_ids for genuinely different events.
+- The group is about the EVENT or STORY BEAT, not merely the broad topic.
+- Several wickets from the same batting collapse can belong to one group.
+- Several moments from the same continuous scoring sequence can belong to one group.
+- Adjacent setup and payoff for one moment should normally share a group.
+- A different breakthrough, separate innings phase, separate argument, separate
+  reveal, or final result should normally get a different group.
+- Do NOT put the entire video into one group just because the topic is the same.
+- Keep separate events separate even when they involve the same people or topic.
+- group_id is an internal integer only. Start at 1 and reuse the same number
+  whenever windows clearly belong to the same underlying event.
+- Every input window must appear exactly once in the output.
+- Do not invent or omit window IDs.
+
+The purpose is to prevent the final shortlist from spending several slots on
+different windows that all describe the same event.
+
+WINDOWS_JSON:
+{windows_json}
+
+Return only:
+
+{{
+  "groups": [
+    {{
+      "id": "<window id>",
+      "group_id": <integer>
     }}
   ]
 }}
