@@ -1773,11 +1773,16 @@ def get_viral_clips(transcript_result, video_duration):
         event_groups = {}
 
         def _event_group_prompt(ws):
+            n_windows = len(ws)
+
             return gemini_worker.EVENT_GROUP_PROMPT_TEMPLATE.format(
+                min_groups=max(2, n_windows // 4),
+                max_groups=max(3, n_windows // 2),
+                target_groups=max(3, round(n_windows / 4)),
                 windows_json=json.dumps(
                     _payload(ws),
                     ensure_ascii=False,
-                )
+                ),
             )
 
         grouped = _run_stage_split(
@@ -1791,19 +1796,24 @@ def get_viral_clips(transcript_result, video_duration):
             "event-group",
         )
 
-        for item in grouped:
-            window_id = str(item.get("id") or "")
-
-            if not window_id:
-                continue
-
+        for group in grouped:
             try:
-                group_id = int(item.get("group_id"))
+                group_id = int(group.get("group_id"))
             except (TypeError, ValueError):
                 continue
 
-            event_groups[window_id] = group_id
+            window_ids = group.get("window_ids") or []
 
+            if not isinstance(window_ids, list):
+                continue
+
+            for window_id in window_ids:
+                window_id = str(window_id or "")
+
+                if not window_id:
+                    continue
+
+                event_groups[window_id] = group_id
         print("\n===== EVENT GROUPS =====")
 
         groups_for_log = {}
