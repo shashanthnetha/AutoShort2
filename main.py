@@ -1765,7 +1765,7 @@ def get_viral_clips(transcript_result, video_duration):
             scored.extend(_run_stage_split(
                 client, model_name, batch, _score_prompt,
                 gemini_worker.ScoreResponse, "windows", costs, "score"))
-                  # --- Pass 1.5: globally group windows by underlying event/story ---
+        # --- Pass 1.5: globally group windows by underlying event/story ---
         #
         # The scoring pass is intentionally batched for context safety, but
         # event grouping needs to see the whole video so windows from the same
