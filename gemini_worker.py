@@ -33,8 +33,9 @@ class ScoreResponse(BaseModel):
 
 
 class EventGroupAssignment(BaseModel):
-    id: str
     group_id: int
+    label: str
+    window_ids: List[str]
 
 
 class EventGroupResponse(BaseModel):
@@ -323,31 +324,60 @@ Return only:
 """
 
 EVENT_GROUP_PROMPT_TEMPLATE = """
-You are a senior short-form video editor organizing candidate moments from ONE
-long-form video before final clip selection.
+You are a senior short-form video editor clustering candidate windows from ONE
+long-form video into coherent EVENT GROUPS before final clip selection.
 
-Group candidate windows that belong to the SAME underlying event, story beat,
-or continuous narrative moment.
+Your job is to identify which windows describe the SAME underlying event,
+story beat, sequence, or narrative moment.
 
-IMPORTANT:
-- Assign EVERY window exactly ONE group_id.
-- Use the SAME group_id for windows describing the same underlying event.
-- Use DIFFERENT group_ids for genuinely different events.
-- The group is about the EVENT or STORY BEAT, not merely the broad topic.
-- Several wickets from the same batting collapse can belong to one group.
-- Several moments from the same continuous scoring sequence can belong to one group.
-- Adjacent setup and payoff for one moment should normally share a group.
-- A different breakthrough, separate innings phase, separate argument, separate
-  reveal, or final result should normally get a different group.
-- Do NOT put the entire video into one group just because the topic is the same.
-- Keep separate events separate even when they involve the same people or topic.
-- group_id is an internal integer only. Start at 1 and reuse the same number
-  whenever windows clearly belong to the same underlying event.
-- Every input window must appear exactly once in the output.
-- Do not invent or omit window IDs.
+Do NOT classify each window independently.
 
-The purpose is to prevent the final shortlist from spending several slots on
-different windows that all describe the same event.
+Instead, FIRST build a small number of meaningful groups, THEN assign every
+window to exactly one group.
+
+GROUP COUNT:
+- Return between {min_groups} and {max_groups} groups.
+- Aim for approximately {target_groups} groups.
+- Do NOT create one group per window.
+- Reuse groups aggressively when multiple windows describe the same event.
+- A group may contain one window only when that moment is genuinely isolated.
+- For a 22-window sports video, groups will usually contain multiple windows.
+
+EVENT GROUPING RULES:
+- Windows covering the same continuous event MUST normally share one group.
+- Several wickets from the same batting collapse should normally be ONE group.
+- Several moments from the same scoring sequence should normally be ONE group.
+- Different innings phases can be different groups when the underlying event changes.
+- A separate breakthrough, separate review, separate tactical turning point,
+  or separate final result can have its own group.
+- Group by the underlying event/story beat, NOT merely by the broad topic.
+- Overlapping windows with substantially similar meaning should normally be
+  grouped together.
+- Do NOT split one event into multiple groups just because the windows have
+  different timestamps.
+- Do NOT merge the entire video into one group just because it is the same match.
+
+EVERY WINDOW CONTRACT:
+- Every input window must appear exactly once across all groups.
+- Do not invent window IDs.
+- Do not omit window IDs.
+- Do not place one window in multiple groups.
+- group_id is an internal integer beginning at 1.
+- label is a short human-readable description of the underlying event.
+
+EXAMPLE:
+If the input contains:
+- window_006: rapid succession of Pakistan wickets
+- window_007: Pakistan innings collapsing
+- window_008: continuation of the same collapse
+- window_009: DRS review during the same collapse
+- window_010: final wickets ending the collapse
+
+These should normally share ONE group such as:
+"group_id": 2,
+"label": "Pakistan batting collapse"
+
+Do not turn them into five separate groups.
 
 WINDOWS_JSON:
 {windows_json}
@@ -357,8 +387,9 @@ Return only:
 {{
   "groups": [
     {{
-      "id": "<window id>",
-      "group_id": <integer>
+      "group_id": <integer>,
+      "label": "<short event label>",
+      "window_ids": ["<window id>", "..."]
     }}
   ]
 }}
