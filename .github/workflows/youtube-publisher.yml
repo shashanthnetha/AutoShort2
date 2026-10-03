@@ -61,8 +61,8 @@ jobs:
 
           if [ "$GITHUB_EVENT_NAME" = "workflow_run" ]; then
             SOURCE_RUN_ID="${{ github.event.workflow_run.id }}"
-            UPLOAD_COUNT="all"
-            PRIVACY_STATUS="public"
+            UPLOAD_COUNT="1"
+            PRIVACY_STATUS="private"
 
             echo "Automatic publishing mode"
             echo "Source run ID: $SOURCE_RUN_ID"
