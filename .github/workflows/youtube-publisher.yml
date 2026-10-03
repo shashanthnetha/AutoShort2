@@ -30,7 +30,7 @@ on:
       category_id:
         description: "YouTube category ID"
         required: true
-        default: "24"
+        default: "17"
         type: string
 
 jobs:
@@ -60,7 +60,7 @@ jobs:
           echo "DOWNLOADED ARTIFACT"
           echo "========================================"
 
-          find publish-input -maxdepth 2 -type f -print | sort
+          find publish-input -maxdepth 3 -type f -print | sort
 
           echo ""
           echo "Checking required metadata..."
@@ -68,9 +68,6 @@ jobs:
           if [ ! -f "publish-input/job-result.json" ]; then
             echo ""
             echo "ERROR: job-result.json is missing."
-            echo ""
-            echo "This artifact was created before metadata was added"
-            echo "to the final-shorts artifact."
             echo ""
             echo "Use a newer Test Clip Generation run."
             exit 1
@@ -81,21 +78,25 @@ jobs:
           echo ""
           echo "Checking Shorts..."
 
-          find publish-input \
+          find publish-input/final-shorts \
             -maxdepth 1 \
             -type f \
             -name 'short_*.mp4' \
             -print \
             | sort -V
 
-          SHORT_COUNT=$(find publish-input \
+          SHORT_COUNT=$(find publish-input/final-shorts \
             -maxdepth 1 \
             -type f \
             -name 'short_*.mp4' \
             | wc -l)
 
           if [ "$SHORT_COUNT" -eq 0 ]; then
+            echo ""
             echo "ERROR: No Shorts were found."
+            echo ""
+            echo "Expected files under:"
+            echo "publish-input/final-shorts/"
             exit 1
           fi
 
@@ -134,9 +135,19 @@ jobs:
           from googleapiclient.discovery import build
           from googleapiclient.http import MediaFileUpload
 
+          # ------------------------------------------------------------
+          # Artifact structure:
+          #
+          # publish-input/
+          # ├── job-result.json
+          # └── final-shorts/
+          #     ├── short_01.mp4
+          #     ├── short_02.mp4
+          #     └── ...
+          # ------------------------------------------------------------
 
-          INPUT_DIR = Path("publish-input")
-          JOB_RESULT = INPUT_DIR / "job-result.json"
+          INPUT_DIR = Path("publish-input/final-shorts")
+          JOB_RESULT = Path("publish-input/job-result.json")
 
           CLIENT_ID = os.environ["YOUTUBE_CLIENT_ID"]
           CLIENT_SECRET = os.environ["YOUTUBE_CLIENT_SECRET"]
@@ -145,7 +156,6 @@ jobs:
           UPLOAD_COUNT = os.environ["UPLOAD_COUNT"]
           PRIVACY_STATUS = os.environ["PRIVACY_STATUS"]
           CATEGORY_ID = os.environ["CATEGORY_ID"]
-
 
           # ------------------------------------------------------------
           # Load OpenShorts metadata
@@ -170,10 +180,8 @@ jobs:
           print("========================================")
           print(f"Metadata clips: {len(clips)}")
 
-
           # ------------------------------------------------------------
-          # Find final Shorts numerically
-          # short_01, short_02, ... short_10
+          # Find Shorts numerically
           # ------------------------------------------------------------
 
           pattern = re.compile(r"^short_(\d+)\.mp4$")
@@ -195,16 +203,25 @@ jobs:
                   "ERROR: No short_*.mp4 files were found."
               )
 
-          if len(clips) < len(short_files):
+          print("")
+          print("Shorts found:")
+
+          for number, path in short_files:
+              print(f"  {number}: {path.name}")
+
+          # ------------------------------------------------------------
+          # Verify metadata count matches Shorts count
+          # ------------------------------------------------------------
+
+          if len(clips) != len(short_files):
               raise SystemExit(
-                  f"ERROR: Found {len(short_files)} Shorts but only "
+                  f"ERROR: Found {len(short_files)} Shorts but "
                   f"{len(clips)} metadata clips. Refusing to publish "
                   f"because metadata could be mismatched."
               )
 
-
           # ------------------------------------------------------------
-          # Select how many Shorts to upload
+          # Select upload count
           # ------------------------------------------------------------
 
           if UPLOAD_COUNT == "all":
@@ -215,7 +232,6 @@ jobs:
 
           print("")
           print(f"Shorts selected: {len(selected)}")
-
 
           # ------------------------------------------------------------
           # Create YouTube OAuth credentials
@@ -245,9 +261,8 @@ jobs:
               credentials=credentials,
           )
 
-
           # ------------------------------------------------------------
-          # Upload each Short
+          # Upload Shorts
           # ------------------------------------------------------------
 
           for number, video_path in selected:
@@ -271,7 +286,7 @@ jobs:
               )
 
               # --------------------------------------------------------
-              # Do NOT publish generic titles.
+              # Refuse missing metadata.
               # --------------------------------------------------------
 
               if not title:
@@ -290,9 +305,8 @@ jobs:
               description = str(description).strip()
               hook = str(hook).strip()
 
-
               # --------------------------------------------------------
-              # Build YouTube description
+              # Build description
               # --------------------------------------------------------
 
               description_parts = []
@@ -301,19 +315,19 @@ jobs:
                   description_parts.append(hook)
 
               description_parts.append(description)
-
               description_parts.append("#Shorts")
 
               final_description = "\n\n".join(
-                  part for part in description_parts if part
+                  part
+                  for part in description_parts
+                  if part
               )
 
-              # YouTube limits the title to 100 characters.
+              # YouTube title limit.
               title = title[:100]
 
-              # Keep description within YouTube's API limit.
+              # YouTube description limit.
               final_description = final_description[:5000]
-
 
               print("")
               print("========================================")
@@ -327,7 +341,6 @@ jobs:
               print("Description:")
               print(final_description)
 
-
               body = {
                   "snippet": {
                       "title": title,
@@ -340,13 +353,11 @@ jobs:
                   },
               }
 
-
               media = MediaFileUpload(
                   str(video_path),
                   mimetype="video/mp4",
                   resumable=True,
               )
-
 
               request = youtube.videos().insert(
                   part="snippet,status",
@@ -354,11 +365,9 @@ jobs:
                   media_body=media,
               )
 
-
               response = request.execute()
 
               video_id = response["id"]
-
 
               print("")
               print("UPLOAD SUCCESSFUL")
@@ -369,7 +378,6 @@ jobs:
                   "URL:",
                   f"https://www.youtube.com/watch?v={video_id}",
               )
-
 
           print("")
           print("========================================")
