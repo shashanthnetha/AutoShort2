@@ -238,7 +238,7 @@ jobs:
             find output \
               -type f \
               -name 'subtitled_*_clip_*.mp4' \
-              -print | sort
+              -print | sort -V
           )
 
           echo "Found ${#clips[@]} final subtitled clips"
