@@ -180,6 +180,7 @@ jobs:
           YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
           YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           set -e
@@ -205,6 +206,7 @@ jobs:
           CLIENT_ID = os.environ["YOUTUBE_CLIENT_ID"]
           CLIENT_SECRET = os.environ["YOUTUBE_CLIENT_SECRET"]
           REFRESH_TOKEN = os.environ["YOUTUBE_REFRESH_TOKEN"]
+          YOUTUBE_API_KEY = os.environ["YOUTUBE_API_KEY"]
           GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 
           UPLOAD_COUNT = os.environ["UPLOAD_COUNT"]
@@ -319,6 +321,11 @@ jobs:
               "v3",
               credentials=credentials,
           )
+          category_youtube = build(
+              "youtube",
+              "v3",
+              developerKey=YOUTUBE_API_KEY,
+          )
 
 
           # ============================================================
@@ -329,7 +336,7 @@ jobs:
           print("Fetching available YouTube categories...")
 
           category_response = (
-              youtube
+              category_youtube
               .videoCategories()
               .list(
                   part="snippet",
