@@ -277,5 +277,6 @@ jobs:
           name: final-shorts
           path: |
             final-shorts/*.mp4
+            job-result.json
           retention-days: 3
           if-no-files-found: warn
