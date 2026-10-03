@@ -17,6 +17,22 @@ on:
           - "1"
           - "all"
 
+      privacy_status:
+        description: "YouTube privacy status"
+        required: true
+        default: "private"
+        type: choice
+        options:
+          - "private"
+          - "unlisted"
+          - "public"
+
+      category_id:
+        description: "YouTube category ID"
+        required: true
+        default: "24"
+        type: string
+
 jobs:
   publish:
     runs-on: ubuntu-latest
@@ -35,7 +51,7 @@ jobs:
           repository: ${{ github.repository }}
           run-id: ${{ inputs.source_run_id }}
 
-      - name: Inspect downloaded files
+      - name: Validate artifact
         run: |
           set -e
 
@@ -47,8 +63,44 @@ jobs:
           find publish-input -maxdepth 2 -type f -print | sort
 
           echo ""
-          echo "Shorts found:"
-          find publish-input -maxdepth 1 -type f -name 'short_*.mp4' -print | sort
+          echo "Checking required metadata..."
+
+          if [ ! -f "publish-input/job-result.json" ]; then
+            echo ""
+            echo "ERROR: job-result.json is missing."
+            echo ""
+            echo "This artifact was created before metadata was added"
+            echo "to the final-shorts artifact."
+            echo ""
+            echo "Use a newer Test Clip Generation run."
+            exit 1
+          fi
+
+          echo "job-result.json found."
+
+          echo ""
+          echo "Checking Shorts..."
+
+          find publish-input \
+            -maxdepth 1 \
+            -type f \
+            -name 'short_*.mp4' \
+            -print \
+            | sort -V
+
+          SHORT_COUNT=$(find publish-input \
+            -maxdepth 1 \
+            -type f \
+            -name 'short_*.mp4' \
+            | wc -l)
+
+          if [ "$SHORT_COUNT" -eq 0 ]; then
+            echo "ERROR: No Shorts were found."
+            exit 1
+          fi
+
+          echo ""
+          echo "Shorts found: $SHORT_COUNT"
 
       - name: Install YouTube API libraries
         run: |
@@ -66,6 +118,8 @@ jobs:
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
           YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
           UPLOAD_COUNT: ${{ inputs.upload_count }}
+          PRIVACY_STATUS: ${{ inputs.privacy_status }}
+          CATEGORY_ID: ${{ inputs.category_id }}
         run: |
           set -e
 
@@ -80,51 +134,50 @@ jobs:
           from googleapiclient.discovery import build
           from googleapiclient.http import MediaFileUpload
 
+
           INPUT_DIR = Path("publish-input")
           JOB_RESULT = INPUT_DIR / "job-result.json"
 
-          client_id = os.environ["YOUTUBE_CLIENT_ID"]
-          client_secret = os.environ["YOUTUBE_CLIENT_SECRET"]
-          refresh_token = os.environ["YOUTUBE_REFRESH_TOKEN"]
-          upload_count = os.environ["UPLOAD_COUNT"]
+          CLIENT_ID = os.environ["YOUTUBE_CLIENT_ID"]
+          CLIENT_SECRET = os.environ["YOUTUBE_CLIENT_SECRET"]
+          REFRESH_TOKEN = os.environ["YOUTUBE_REFRESH_TOKEN"]
+
+          UPLOAD_COUNT = os.environ["UPLOAD_COUNT"]
+          PRIVACY_STATUS = os.environ["PRIVACY_STATUS"]
+          CATEGORY_ID = os.environ["CATEGORY_ID"]
+
 
           # ------------------------------------------------------------
-          # Read OpenShorts metadata when available.
-          #
-          # Older artifacts may not contain job-result.json because it
-          # was added later. In that case we safely fall back to a
-          # generic title.
+          # Load OpenShorts metadata
           # ------------------------------------------------------------
 
-          clips = []
+          with JOB_RESULT.open("r", encoding="utf-8") as f:
+              job_data = json.load(f)
 
-          if JOB_RESULT.exists():
-              print("Found job-result.json")
-              with JOB_RESULT.open("r", encoding="utf-8") as f:
-                  job_data = json.load(f)
+          clips = (
+              job_data.get("result", {}).get("clips", [])
+              or []
+          )
 
-              clips = (
-                  job_data.get("result", {}).get("clips", [])
-                  or []
+          if not clips:
+              raise SystemExit(
+                  "ERROR: job-result.json contains no result.clips."
               )
 
-              print(f"Metadata clips found: {len(clips)}")
-          else:
-              print("job-result.json not found.")
-              print("Using fallback titles for this test artifact.")
+          print("")
+          print("========================================")
+          print("OPENSHORTS METADATA")
+          print("========================================")
+          print(f"Metadata clips: {len(clips)}")
+
 
           # ------------------------------------------------------------
-          # Find Shorts in numerical order.
-          #
-          # short_01.mp4
-          # short_02.mp4
-          # ...
-          # short_10.mp4
+          # Find final Shorts numerically
+          # short_01, short_02, ... short_10
           # ------------------------------------------------------------
-
-          short_files = []
 
           pattern = re.compile(r"^short_(\d+)\.mp4$")
+          short_files = []
 
           for path in INPUT_DIR.glob("short_*.mp4"):
               match = pattern.match(path.name)
@@ -139,34 +192,41 @@ jobs:
 
           if not short_files:
               raise SystemExit(
-                  "No short_*.mp4 files were found in the artifact."
+                  "ERROR: No short_*.mp4 files were found."
               )
 
-          print("")
-          print("Shorts available:")
+          if len(clips) < len(short_files):
+              raise SystemExit(
+                  f"ERROR: Found {len(short_files)} Shorts but only "
+                  f"{len(clips)} metadata clips. Refusing to publish "
+                  f"because metadata could be mismatched."
+              )
 
-          for number, path in short_files:
-              print(f"  {number}: {path.name}")
 
-          if upload_count == "all":
+          # ------------------------------------------------------------
+          # Select how many Shorts to upload
+          # ------------------------------------------------------------
+
+          if UPLOAD_COUNT == "all":
               selected = short_files
           else:
-              count = int(upload_count)
+              count = int(UPLOAD_COUNT)
               selected = short_files[:count]
 
           print("")
-          print(f"Shorts selected for upload: {len(selected)}")
+          print(f"Shorts selected: {len(selected)}")
+
 
           # ------------------------------------------------------------
-          # Create YouTube credentials.
+          # Create YouTube OAuth credentials
           # ------------------------------------------------------------
 
           credentials = Credentials(
               token=None,
-              refresh_token=refresh_token,
+              refresh_token=REFRESH_TOKEN,
               token_uri="https://oauth2.googleapis.com/token",
-              client_id=client_id,
-              client_secret=client_secret,
+              client_id=CLIENT_ID,
+              client_secret=CLIENT_SECRET,
               scopes=[
                   "https://www.googleapis.com/auth/youtube.upload"
               ],
@@ -185,40 +245,75 @@ jobs:
               credentials=credentials,
           )
 
+
           # ------------------------------------------------------------
-          # Upload selected Shorts.
-          #
-          # IMPORTANT:
-          # The first integration test deliberately uses PRIVATE
-          # visibility. Once this works, we'll change it to PUBLIC.
+          # Upload each Short
           # ------------------------------------------------------------
 
           for number, video_path in selected:
 
               clip_index = number - 1
-
-              clip = {}
-
-              if 0 <= clip_index < len(clips):
-                  clip = clips[clip_index] or {}
+              clip = clips[clip_index]
 
               title = (
                   clip.get("video_title_for_youtube_short")
                   or clip.get("title")
-                  or f"AutoShort2 Short {number:02d}"
               )
 
               description = (
                   clip.get("video_description_for_instagram")
                   or clip.get("video_description_for_tiktok")
-                  or "Short generated by AutoShort2."
               )
 
-              # YouTube title limit.
-              title = str(title).strip()[:100]
+              hook = (
+                  clip.get("viral_hook_text")
+                  or ""
+              )
 
-              # Keep description reasonable.
-              description = str(description).strip()[:5000]
+              # --------------------------------------------------------
+              # Do NOT publish generic titles.
+              # --------------------------------------------------------
+
+              if not title:
+                  raise SystemExit(
+                      f"ERROR: Short {number:02d} has no "
+                      "YouTube title metadata."
+                  )
+
+              if not description:
+                  raise SystemExit(
+                      f"ERROR: Short {number:02d} has no "
+                      "description metadata."
+                  )
+
+              title = str(title).strip()
+              description = str(description).strip()
+              hook = str(hook).strip()
+
+
+              # --------------------------------------------------------
+              # Build YouTube description
+              # --------------------------------------------------------
+
+              description_parts = []
+
+              if hook:
+                  description_parts.append(hook)
+
+              description_parts.append(description)
+
+              description_parts.append("#Shorts")
+
+              final_description = "\n\n".join(
+                  part for part in description_parts if part
+              )
+
+              # YouTube limits the title to 100 characters.
+              title = title[:100]
+
+              # Keep description within YouTube's API limit.
+              final_description = final_description[:5000]
+
 
               print("")
               print("========================================")
@@ -226,19 +321,25 @@ jobs:
               print("========================================")
               print("File:", video_path.name)
               print("Title:", title)
-              print("Privacy: private")
+              print("Category ID:", CATEGORY_ID)
+              print("Privacy:", PRIVACY_STATUS)
+              print("")
+              print("Description:")
+              print(final_description)
+
 
               body = {
                   "snippet": {
                       "title": title,
-                      "description": description,
-                      "categoryId": "22",
+                      "description": final_description,
+                      "categoryId": CATEGORY_ID,
                   },
                   "status": {
-                      "privacyStatus": "private",
+                      "privacyStatus": PRIVACY_STATUS,
                       "selfDeclaredMadeForKids": False,
                   },
               }
+
 
               media = MediaFileUpload(
                   str(video_path),
@@ -246,28 +347,32 @@ jobs:
                   resumable=True,
               )
 
+
               request = youtube.videos().insert(
                   part="snippet,status",
                   body=body,
                   media_body=media,
               )
 
+
               response = request.execute()
 
               video_id = response["id"]
+
 
               print("")
               print("UPLOAD SUCCESSFUL")
               print("Video ID:", video_id)
               print("Title:", title)
-              print("Privacy: private")
+              print("Privacy:", PRIVACY_STATUS)
               print(
                   "URL:",
                   f"https://www.youtube.com/watch?v={video_id}",
               )
 
+
           print("")
           print("========================================")
-          print("YOUTUBE PUBLISH TEST COMPLETED")
+          print("YOUTUBE PUBLISHING COMPLETED")
           print("========================================")
           PY
