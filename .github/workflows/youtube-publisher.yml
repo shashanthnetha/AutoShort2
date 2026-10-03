@@ -1,6 +1,16 @@
 name: Publish Shorts to YouTube
 
 on:
+  # Automatic publishing:
+  # Start this workflow whenever Test Clip Generation finishes.
+  workflow_run:
+    workflows:
+      - "Test Clip Generation"
+    types:
+      - completed
+
+  # Manual fallback:
+  # We keep this so you can manually publish an existing run if needed.
   workflow_dispatch:
     inputs:
       source_run_id:
@@ -35,13 +45,63 @@ on:
 
 jobs:
   publish:
+    # Automatic runs only continue when Test Clip Generation succeeded.
+    #
+    # Manual runs are always allowed.
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_branch == 'main'
+      )
+
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     permissions:
       actions: read
+      contents: read
 
     steps:
+      - name: Determine publishing source and settings
+        run: |
+          set -e
+
+          if [ "$GITHUB_EVENT_NAME" = "workflow_run" ]; then
+            SOURCE_RUN_ID="${{ github.event.workflow_run.id }}"
+            UPLOAD_COUNT="all"
+            PRIVACY_STATUS="public"
+            CATEGORY_ID="17"
+
+            echo "Automatic publishing mode"
+            echo "Triggered by: Test Clip Generation"
+            echo "Source run ID: $SOURCE_RUN_ID"
+            echo "Upload count: $UPLOAD_COUNT"
+            echo "Privacy: $PRIVACY_STATUS"
+            echo "Category ID: $CATEGORY_ID"
+          else
+            SOURCE_RUN_ID="${{ inputs.source_run_id }}"
+            UPLOAD_COUNT="${{ inputs.upload_count }}"
+            PRIVACY_STATUS="${{ inputs.privacy_status }}"
+            CATEGORY_ID="${{ inputs.category_id }}"
+
+            echo "Manual publishing mode"
+            echo "Source run ID: $SOURCE_RUN_ID"
+            echo "Upload count: $UPLOAD_COUNT"
+            echo "Privacy: $PRIVACY_STATUS"
+            echo "Category ID: $CATEGORY_ID"
+          fi
+
+          if [ -z "$SOURCE_RUN_ID" ]; then
+            echo "ERROR: No source workflow run ID."
+            exit 1
+          fi
+
+          echo "SOURCE_RUN_ID=$SOURCE_RUN_ID" >> "$GITHUB_ENV"
+          echo "UPLOAD_COUNT=$UPLOAD_COUNT" >> "$GITHUB_ENV"
+          echo "PRIVACY_STATUS=$PRIVACY_STATUS" >> "$GITHUB_ENV"
+          echo "CATEGORY_ID=$CATEGORY_ID" >> "$GITHUB_ENV"
+
       - name: Download final Shorts artifact
         uses: actions/download-artifact@v5
         with:
@@ -49,7 +109,7 @@ jobs:
           path: publish-input
           github-token: ${{ secrets.GITHUB_TOKEN }}
           repository: ${{ github.repository }}
-          run-id: ${{ inputs.source_run_id }}
+          run-id: ${{ env.SOURCE_RUN_ID }}
 
       - name: Validate artifact
         run: |
@@ -69,7 +129,8 @@ jobs:
             echo ""
             echo "ERROR: job-result.json is missing."
             echo ""
-            echo "Use a newer Test Clip Generation run."
+            echo "The source run does not contain the required"
+            echo "OpenShorts metadata."
             exit 1
           fi
 
@@ -95,8 +156,8 @@ jobs:
             echo ""
             echo "ERROR: No Shorts were found."
             echo ""
-            echo "Expected files under:"
-            echo "publish-input/final-shorts/"
+            echo "Expected:"
+            echo "publish-input/final-shorts/short_*.mp4"
             exit 1
           fi
 
@@ -118,9 +179,6 @@ jobs:
           YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
           YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
-          UPLOAD_COUNT: ${{ inputs.upload_count }}
-          PRIVACY_STATUS: ${{ inputs.privacy_status }}
-          CATEGORY_ID: ${{ inputs.category_id }}
         run: |
           set -e
 
@@ -135,16 +193,6 @@ jobs:
           from googleapiclient.discovery import build
           from googleapiclient.http import MediaFileUpload
 
-          # ------------------------------------------------------------
-          # Artifact structure:
-          #
-          # publish-input/
-          # ├── job-result.json
-          # └── final-shorts/
-          #     ├── short_01.mp4
-          #     ├── short_02.mp4
-          #     └── ...
-          # ------------------------------------------------------------
 
           INPUT_DIR = Path("publish-input/final-shorts")
           JOB_RESULT = Path("publish-input/job-result.json")
@@ -156,6 +204,7 @@ jobs:
           UPLOAD_COUNT = os.environ["UPLOAD_COUNT"]
           PRIVACY_STATUS = os.environ["PRIVACY_STATUS"]
           CATEGORY_ID = os.environ["CATEGORY_ID"]
+
 
           # ------------------------------------------------------------
           # Load OpenShorts metadata
@@ -180,6 +229,7 @@ jobs:
           print("========================================")
           print(f"Metadata clips: {len(clips)}")
 
+
           # ------------------------------------------------------------
           # Find Shorts numerically
           # ------------------------------------------------------------
@@ -203,14 +253,16 @@ jobs:
                   "ERROR: No short_*.mp4 files were found."
               )
 
+
           print("")
           print("Shorts found:")
 
           for number, path in short_files:
               print(f"  {number}: {path.name}")
 
+
           # ------------------------------------------------------------
-          # Verify metadata count matches Shorts count
+          # Metadata count must match Shorts count exactly.
           # ------------------------------------------------------------
 
           if len(clips) != len(short_files):
@@ -219,6 +271,7 @@ jobs:
                   f"{len(clips)} metadata clips. Refusing to publish "
                   f"because metadata could be mismatched."
               )
+
 
           # ------------------------------------------------------------
           # Select upload count
@@ -232,6 +285,9 @@ jobs:
 
           print("")
           print(f"Shorts selected: {len(selected)}")
+          print(f"Privacy: {PRIVACY_STATUS}")
+          print(f"Category ID: {CATEGORY_ID}")
+
 
           # ------------------------------------------------------------
           # Create YouTube OAuth credentials
@@ -248,6 +304,7 @@ jobs:
               ],
           )
 
+
           print("")
           print("Refreshing YouTube access token...")
 
@@ -255,11 +312,13 @@ jobs:
 
           print("Access token refreshed successfully.")
 
+
           youtube = build(
               "youtube",
               "v3",
               credentials=credentials,
           )
+
 
           # ------------------------------------------------------------
           # Upload Shorts
@@ -280,13 +339,11 @@ jobs:
                   or clip.get("video_description_for_tiktok")
               )
 
-              hook = (
-                  clip.get("viral_hook_text")
-                  or ""
-              )
+              hook = clip.get("viral_hook_text") or ""
+
 
               # --------------------------------------------------------
-              # Refuse missing metadata.
+              # Never upload without proper metadata.
               # --------------------------------------------------------
 
               if not title:
@@ -301,12 +358,14 @@ jobs:
                       "description metadata."
                   )
 
+
               title = str(title).strip()
               description = str(description).strip()
               hook = str(hook).strip()
 
+
               # --------------------------------------------------------
-              # Build description
+              # Build YouTube description
               # --------------------------------------------------------
 
               description_parts = []
@@ -323,11 +382,13 @@ jobs:
                   if part
               )
 
+
               # YouTube title limit.
               title = title[:100]
 
               # YouTube description limit.
               final_description = final_description[:5000]
+
 
               print("")
               print("========================================")
@@ -341,6 +402,7 @@ jobs:
               print("Description:")
               print(final_description)
 
+
               body = {
                   "snippet": {
                       "title": title,
@@ -353,11 +415,13 @@ jobs:
                   },
               }
 
+
               media = MediaFileUpload(
                   str(video_path),
                   mimetype="video/mp4",
                   resumable=True,
               )
+
 
               request = youtube.videos().insert(
                   part="snippet,status",
@@ -365,9 +429,11 @@ jobs:
                   media_body=media,
               )
 
+
               response = request.execute()
 
               video_id = response["id"]
+
 
               print("")
               print("UPLOAD SUCCESSFUL")
@@ -378,6 +444,7 @@ jobs:
                   "URL:",
                   f"https://www.youtube.com/watch?v={video_id}",
               )
+
 
           print("")
           print("========================================")
