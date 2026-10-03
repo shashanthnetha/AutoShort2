@@ -1,16 +1,12 @@
 name: Publish Shorts to YouTube
 
 on:
-  # Automatic publishing:
-  # Start this workflow whenever Test Clip Generation finishes.
   workflow_run:
     workflows:
       - "Test Clip Generation"
     types:
       - completed
 
-  # Manual fallback:
-  # We keep this so you can manually publish an existing run if needed.
   workflow_dispatch:
     inputs:
       source_run_id:
@@ -37,17 +33,8 @@ on:
           - "unlisted"
           - "public"
 
-      category_id:
-        description: "YouTube category ID"
-        required: true
-        default: "17"
-        type: string
-
 jobs:
   publish:
-    # Automatic runs only continue when Test Clip Generation succeeded.
-    #
-    # Manual runs are always allowed.
     if: >
       github.event_name == 'workflow_dispatch' ||
       (
@@ -63,6 +50,11 @@ jobs:
       contents: read
 
     steps:
+
+      # ------------------------------------------------------------
+      # Determine source run and publishing mode
+      # ------------------------------------------------------------
+
       - name: Determine publishing source and settings
         run: |
           set -e
@@ -71,25 +63,21 @@ jobs:
             SOURCE_RUN_ID="${{ github.event.workflow_run.id }}"
             UPLOAD_COUNT="all"
             PRIVACY_STATUS="public"
-            CATEGORY_ID="17"
 
             echo "Automatic publishing mode"
-            echo "Triggered by: Test Clip Generation"
             echo "Source run ID: $SOURCE_RUN_ID"
             echo "Upload count: $UPLOAD_COUNT"
             echo "Privacy: $PRIVACY_STATUS"
-            echo "Category ID: $CATEGORY_ID"
+
           else
             SOURCE_RUN_ID="${{ inputs.source_run_id }}"
             UPLOAD_COUNT="${{ inputs.upload_count }}"
             PRIVACY_STATUS="${{ inputs.privacy_status }}"
-            CATEGORY_ID="${{ inputs.category_id }}"
 
             echo "Manual publishing mode"
             echo "Source run ID: $SOURCE_RUN_ID"
             echo "Upload count: $UPLOAD_COUNT"
             echo "Privacy: $PRIVACY_STATUS"
-            echo "Category ID: $CATEGORY_ID"
           fi
 
           if [ -z "$SOURCE_RUN_ID" ]; then
@@ -100,7 +88,11 @@ jobs:
           echo "SOURCE_RUN_ID=$SOURCE_RUN_ID" >> "$GITHUB_ENV"
           echo "UPLOAD_COUNT=$UPLOAD_COUNT" >> "$GITHUB_ENV"
           echo "PRIVACY_STATUS=$PRIVACY_STATUS" >> "$GITHUB_ENV"
-          echo "CATEGORY_ID=$CATEGORY_ID" >> "$GITHUB_ENV"
+
+
+      # ------------------------------------------------------------
+      # Download artifact from the exact generation run
+      # ------------------------------------------------------------
 
       - name: Download final Shorts artifact
         uses: actions/download-artifact@v5
@@ -110,6 +102,11 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           repository: ${{ github.repository }}
           run-id: ${{ env.SOURCE_RUN_ID }}
+
+
+      # ------------------------------------------------------------
+      # Validate artifact
+      # ------------------------------------------------------------
 
       - name: Validate artifact
         run: |
@@ -128,9 +125,6 @@ jobs:
           if [ ! -f "publish-input/job-result.json" ]; then
             echo ""
             echo "ERROR: job-result.json is missing."
-            echo ""
-            echo "The source run does not contain the required"
-            echo "OpenShorts metadata."
             exit 1
           fi
 
@@ -153,18 +147,19 @@ jobs:
             | wc -l)
 
           if [ "$SHORT_COUNT" -eq 0 ]; then
-            echo ""
             echo "ERROR: No Shorts were found."
-            echo ""
-            echo "Expected:"
-            echo "publish-input/final-shorts/short_*.mp4"
             exit 1
           fi
 
           echo ""
           echo "Shorts found: $SHORT_COUNT"
 
-      - name: Install YouTube API libraries
+
+      # ------------------------------------------------------------
+      # Install libraries
+      # ------------------------------------------------------------
+
+      - name: Install API libraries
         run: |
           set -e
 
@@ -172,13 +167,20 @@ jobs:
             google-api-python-client \
             google-auth \
             google-auth-httplib2 \
-            google-auth-oauthlib
+            google-auth-oauthlib \
+            google-genai
+
+
+      # ------------------------------------------------------------
+      # Upload to YouTube
+      # ------------------------------------------------------------
 
       - name: Upload Shorts to YouTube
         env:
           YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
           YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           set -e
 
@@ -187,6 +189,9 @@ jobs:
           import os
           import re
           from pathlib import Path
+
+          from google import genai
+          from google.genai import types
 
           from google.auth.transport.requests import Request
           from google.oauth2.credentials import Credentials
@@ -200,15 +205,15 @@ jobs:
           CLIENT_ID = os.environ["YOUTUBE_CLIENT_ID"]
           CLIENT_SECRET = os.environ["YOUTUBE_CLIENT_SECRET"]
           REFRESH_TOKEN = os.environ["YOUTUBE_REFRESH_TOKEN"]
+          GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 
           UPLOAD_COUNT = os.environ["UPLOAD_COUNT"]
           PRIVACY_STATUS = os.environ["PRIVACY_STATUS"]
-          CATEGORY_ID = os.environ["CATEGORY_ID"]
 
 
-          # ------------------------------------------------------------
+          # ============================================================
           # Load OpenShorts metadata
-          # ------------------------------------------------------------
+          # ============================================================
 
           with JOB_RESULT.open("r", encoding="utf-8") as f:
               job_data = json.load(f)
@@ -230,9 +235,9 @@ jobs:
           print(f"Metadata clips: {len(clips)}")
 
 
-          # ------------------------------------------------------------
-          # Find Shorts numerically
-          # ------------------------------------------------------------
+          # ============================================================
+          # Find Shorts
+          # ============================================================
 
           pattern = re.compile(r"^short_(\d+)\.mp4$")
           short_files = []
@@ -261,21 +266,20 @@ jobs:
               print(f"  {number}: {path.name}")
 
 
-          # ------------------------------------------------------------
-          # Metadata count must match Shorts count exactly.
-          # ------------------------------------------------------------
+          # ============================================================
+          # Verify metadata count
+          # ============================================================
 
           if len(clips) != len(short_files):
               raise SystemExit(
                   f"ERROR: Found {len(short_files)} Shorts but "
-                  f"{len(clips)} metadata clips. Refusing to publish "
-                  f"because metadata could be mismatched."
+                  f"{len(clips)} metadata clips. Refusing to publish."
               )
 
 
-          # ------------------------------------------------------------
-          # Select upload count
-          # ------------------------------------------------------------
+          # ============================================================
+          # Select Shorts
+          # ============================================================
 
           if UPLOAD_COUNT == "all":
               selected = short_files
@@ -285,13 +289,11 @@ jobs:
 
           print("")
           print(f"Shorts selected: {len(selected)}")
-          print(f"Privacy: {PRIVACY_STATUS}")
-          print(f"Category ID: {CATEGORY_ID}")
 
 
-          # ------------------------------------------------------------
+          # ============================================================
           # Create YouTube OAuth credentials
-          # ------------------------------------------------------------
+          # ============================================================
 
           credentials = Credentials(
               token=None,
@@ -303,7 +305,6 @@ jobs:
                   "https://www.googleapis.com/auth/youtube.upload"
               ],
           )
-
 
           print("")
           print("Refreshing YouTube access token...")
@@ -320,9 +321,285 @@ jobs:
           )
 
 
-          # ------------------------------------------------------------
+          # ============================================================
+          # Get currently available YouTube categories
+          # ============================================================
+
+          print("")
+          print("Fetching available YouTube categories...")
+
+          category_response = (
+              youtube
+              .videoCategories()
+              .list(
+                  part="snippet",
+                  regionCode="IN",
+                  hl="en_US",
+              )
+              .execute()
+          )
+
+          available_categories = []
+
+          for item in category_response.get("items", []):
+              snippet = item.get("snippet", {})
+
+              if not snippet.get("assignable", False):
+                  continue
+
+              category_id = str(item.get("id", "")).strip()
+              category_title = str(
+                  snippet.get("title", "")
+              ).strip()
+
+              if category_id and category_title:
+                  available_categories.append({
+                      "id": category_id,
+                      "title": category_title,
+                  })
+
+
+          if not available_categories:
+              raise SystemExit(
+                  "ERROR: YouTube returned no assignable categories."
+              )
+
+
+          print("")
+          print("Available categories:")
+
+          for category in available_categories:
+              print(
+                  f"  {category['id']}: "
+                  f"{category['title']}"
+              )
+
+
+          # ============================================================
+          # Ask Gemini to classify ALL selected Shorts in ONE call
+          # ============================================================
+
+          category_payload = []
+
+          for number, _video_path in selected:
+
+              clip_index = number - 1
+              clip = clips[clip_index]
+
+              category_payload.append({
+                  "short_number": number,
+                  "title": (
+                      clip.get(
+                          "video_title_for_youtube_short"
+                      )
+                      or clip.get("title")
+                      or ""
+                  ),
+                  "description": (
+                      clip.get(
+                          "video_description_for_instagram"
+                      )
+                      or clip.get(
+                          "video_description_for_tiktok"
+                      )
+                      or ""
+                  ),
+                  "hook": (
+                      clip.get("viral_hook_text")
+                      or ""
+                  ),
+              })
+
+
+          category_names = [
+              category["title"]
+              for category in available_categories
+          ]
+
+
+          category_prompt = f"""
+          You are classifying short-form videos for YouTube.
+
+          Choose the SINGLE most appropriate YouTube video category for EACH Short.
+
+          IMPORTANT:
+          - Choose only from the allowed category names below.
+          - Do not invent a category.
+          - Base the decision on the actual subject of the Short.
+          - Ignore the creator/channel identity.
+          - Use the closest specific category.
+          - Do NOT choose a generic category just because the title is broad.
+          - Return exactly one category for every short.
+
+          ALLOWED YOUTUBE CATEGORIES:
+          {json.dumps(category_names, ensure_ascii=False)}
+
+          SHORTS:
+          {json.dumps(category_payload, ensure_ascii=False, indent=2)}
+
+          Return ONLY valid JSON:
+
+          {{
+            "categories": [
+              {{
+                "short_number": 1,
+                "category_title": "Exact category name from allowed list"
+              }}
+            ]
+          }}
+          """
+
+
+          print("")
+          print("========================================")
+          print("GEMINI YOUTUBE CATEGORY CLASSIFICATION")
+          print("========================================")
+
+
+          gemini = genai.Client(
+              api_key=GEMINI_API_KEY
+          )
+
+
+          response = gemini.models.generate_content(
+              model="gemini-3.1-flash-lite",
+              contents=category_prompt,
+              config=types.GenerateContentConfig(
+                  response_mime_type="application/json",
+                  temperature=0,
+              ),
+          )
+
+
+          raw_category_text = (
+              response.text or ""
+          ).strip()
+
+
+          if not raw_category_text:
+              raise SystemExit(
+                  "ERROR: Gemini returned an empty category response."
+              )
+
+
+          try:
+              category_result = json.loads(
+                  raw_category_text
+              )
+          except json.JSONDecodeError as exc:
+              print("Gemini response:")
+              print(raw_category_text)
+              raise SystemExit(
+                  f"ERROR: Could not parse Gemini category JSON: {exc}"
+              )
+
+
+          category_rows = (
+              category_result.get("categories")
+              or []
+          )
+
+
+          if len(category_rows) != len(selected):
+              raise SystemExit(
+                  f"ERROR: Gemini returned "
+                  f"{len(category_rows)} categories for "
+                  f"{len(selected)} Shorts."
+              )
+
+
+          # ============================================================
+          # Build category lookup
+          # ============================================================
+
+          category_lookup = {
+              category["title"].casefold(): category["id"]
+              for category in available_categories
+          }
+
+          category_display_lookup = {
+              category["title"].casefold(): category["title"]
+              for category in available_categories
+          }
+
+
+          selected_numbers = {
+              number
+              for number, _path in selected
+          }
+
+
+          assigned_categories = {}
+
+
+          for row in category_rows:
+
+              try:
+                  short_number = int(
+                      row["short_number"]
+                  )
+              except (
+                  KeyError,
+                  TypeError,
+                  ValueError,
+              ):
+                  raise SystemExit(
+                      "ERROR: Gemini returned an invalid short_number."
+                  )
+
+              if short_number not in selected_numbers:
+                  raise SystemExit(
+                      f"ERROR: Gemini returned unknown "
+                      f"Short {short_number}."
+                  )
+
+              category_title = str(
+                  row.get("category_title", "")
+              ).strip()
+
+              category_key = category_title.casefold()
+
+              if category_key not in category_lookup:
+                  raise SystemExit(
+                      "ERROR: Gemini returned a category "
+                      f"that YouTube did not provide: "
+                      f"{category_title}"
+                  )
+
+              if short_number in assigned_categories:
+                  raise SystemExit(
+                      f"ERROR: Gemini assigned Short "
+                      f"{short_number} more than once."
+                  )
+
+              assigned_categories[short_number] = {
+                  "id": category_lookup[category_key],
+                  "title": category_display_lookup[category_key],
+              }
+
+
+          if set(assigned_categories) != selected_numbers:
+              raise SystemExit(
+                  "ERROR: Gemini did not assign exactly one "
+                  "category to every selected Short."
+              )
+
+
+          print("")
+
+          for number in sorted(assigned_categories):
+              category = assigned_categories[number]
+
+              print(
+                  f"Short {number:02d} → "
+                  f"{category['title']} "
+                  f"(YouTube ID {category['id']})"
+              )
+
+
+          # ============================================================
           # Upload Shorts
-          # ------------------------------------------------------------
+          # ============================================================
 
           for number, video_path in selected:
 
@@ -330,21 +607,26 @@ jobs:
               clip = clips[clip_index]
 
               title = (
-                  clip.get("video_title_for_youtube_short")
+                  clip.get(
+                      "video_title_for_youtube_short"
+                  )
                   or clip.get("title")
               )
 
               description = (
-                  clip.get("video_description_for_instagram")
-                  or clip.get("video_description_for_tiktok")
+                  clip.get(
+                      "video_description_for_instagram"
+                  )
+                  or clip.get(
+                      "video_description_for_tiktok"
+                  )
               )
 
-              hook = clip.get("viral_hook_text") or ""
+              hook = (
+                  clip.get("viral_hook_text")
+                  or ""
+              )
 
-
-              # --------------------------------------------------------
-              # Never upload without proper metadata.
-              # --------------------------------------------------------
 
               if not title:
                   raise SystemExit(
@@ -365,7 +647,7 @@ jobs:
 
 
               # --------------------------------------------------------
-              # Build YouTube description
+              # Build description
               # --------------------------------------------------------
 
               description_parts = []
@@ -383,21 +665,27 @@ jobs:
               )
 
 
-              # YouTube title limit.
               title = title[:100]
-
-              # YouTube description limit.
               final_description = final_description[:5000]
+
+
+              category = assigned_categories[number]
 
 
               print("")
               print("========================================")
               print(f"UPLOADING SHORT {number:02d}")
               print("========================================")
+
               print("File:", video_path.name)
               print("Title:", title)
-              print("Category ID:", CATEGORY_ID)
+              print(
+                  "Category:",
+                  category["title"],
+                  f"(ID {category['id']})",
+              )
               print("Privacy:", PRIVACY_STATUS)
+
               print("")
               print("Description:")
               print(final_description)
@@ -407,7 +695,7 @@ jobs:
                   "snippet": {
                       "title": title,
                       "description": final_description,
-                      "categoryId": CATEGORY_ID,
+                      "categoryId": category["id"],
                   },
                   "status": {
                       "privacyStatus": PRIVACY_STATUS,
@@ -439,7 +727,9 @@ jobs:
               print("UPLOAD SUCCESSFUL")
               print("Video ID:", video_id)
               print("Title:", title)
+              print("Category:", category["title"])
               print("Privacy:", PRIVACY_STATUS)
+
               print(
                   "URL:",
                   f"https://www.youtube.com/watch?v={video_id}",
