@@ -1,0 +1,116 @@
+name: Test YouTube Upload
+
+on:
+  workflow_dispatch:
+    inputs:
+      title:
+        description: "Title for the test YouTube video"
+        required: true
+        default: "AutoShort2 YouTube API Test"
+        type: string
+
+jobs:
+  upload-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Create test video
+        run: |
+          set -e
+
+          ffmpeg -y \
+            -f lavfi -i "color=c=black:s=1080x1920:r=30" \
+            -f lavfi -i "anullsrc=r=44100:cl=stereo" \
+            -t 5 \
+            -c:v libx264 \
+            -preset veryfast \
+            -pix_fmt yuv420p \
+            -c:a aac \
+            -shortest \
+            test-short.mp4
+
+          ls -lh test-short.mp4
+
+      - name: Install YouTube API libraries
+        run: |
+          python3 -m pip install --upgrade \
+            google-api-python-client \
+            google-auth \
+            google-auth-httplib2 \
+            google-auth-oauthlib
+
+      - name: Upload test video to YouTube
+        env:
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+        run: |
+          python3 - <<'PY'
+          import os
+
+          from google.oauth2.credentials import Credentials
+          from google.auth.transport.requests import Request
+          from googleapiclient.discovery import build
+          from googleapiclient.http import MediaFileUpload
+
+          credentials = Credentials(
+              token=None,
+              refresh_token=os.environ["YOUTUBE_REFRESH_TOKEN"],
+              token_uri="https://oauth2.googleapis.com/token",
+              client_id=os.environ["YOUTUBE_CLIENT_ID"],
+              client_secret=os.environ["YOUTUBE_CLIENT_SECRET"],
+              scopes=["https://www.googleapis.com/auth/youtube.upload"],
+          )
+
+          print("Refreshing YouTube access token...")
+          credentials.refresh(Request())
+          print("Access token refreshed successfully.")
+
+          youtube = build(
+              "youtube",
+              "v3",
+              credentials=credentials
+          )
+
+          body = {
+              "snippet": {
+                  "title": "AutoShort2 YouTube API Test",
+                  "description": "Test upload from AutoShort2 GitHub Actions.",
+                  "categoryId": "22",
+              },
+              "status": {
+                  "privacyStatus": "private",
+                  "selfDeclaredMadeForKids": False,
+              },
+          }
+
+          media = MediaFileUpload(
+              "test-short.mp4",
+              mimetype="video/mp4",
+              resumable=True,
+          )
+
+          print("Uploading test video...")
+
+          request = youtube.videos().insert(
+              part="snippet,status",
+              body=body,
+              media_body=media,
+          )
+
+          response = request.execute()
+
+          video_id = response["id"]
+
+          print("")
+          print("========================================")
+          print("YOUTUBE UPLOAD SUCCESSFUL")
+          print("========================================")
+          print("Video ID:", video_id)
+          print("Privacy: private")
+          print(
+              "URL: https://www.youtube.com/watch?v="
+              + video_id
+          )
+          PY
