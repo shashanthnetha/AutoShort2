@@ -238,7 +238,7 @@ jobs:
             find output \
               -type f \
               -name 'subtitled_*_clip_*.mp4' \
-              -print | sort -V
+              -print
           )
 
           echo "Found ${#clips[@]} final subtitled clips"
@@ -248,11 +248,28 @@ jobs:
             exit 1
           fi
 
-          for i in "${!clips[@]}"; do
-            printf -v filename "short_%02d.mp4" "$((i + 1))"
-            cp "${clips[$i]}" "final-shorts/$filename"
-          done
+          for clip in "${clips[@]}"; do
+            filename=$(basename "$clip")
 
+            if [[ "$filename" =~ _clip_([0-9]+)\.mp4$ ]]; then
+              clip_number="${BASH_REMATCH[1]}"
+            else
+              echo "Could not determine clip number from:"
+              echo "$filename"
+              exit 1
+            fi
+
+            printf -v output_name "short_%02d.mp4" "$((10#$clip_number))"
+
+            if [ -e "final-shorts/$output_name" ]; then
+              echo "Duplicate clip number detected: $output_name"
+              exit 1
+            fi
+
+            cp "$clip" "final-shorts/$output_name"
+
+            echo "$filename -> $output_name"
+          done
           echo ""
           echo "========================================"
           echo "FINAL SHORTS"
